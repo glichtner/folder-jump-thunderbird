@@ -1,0 +1,58 @@
+[
+  {
+    "namespace": "folderjump",
+    "description": "Privileged API for injecting and managing the pinned-folder bar in the main Thunderbird window.",
+
+    "functions": [
+      {
+        "name": "updateBar",
+        "type": "function",
+        "description": "Create or refresh the pinned-folder bar in all open 3-pane windows.",
+        "async": true,
+        "parameters": [
+          {
+            "name": "folders",
+            "type": "array",
+            "description": "Ordered list of pinned folders to display.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id":          { "type": "string", "description": "MailFolderId" },
+                "name":        { "type": "string", "description": "Short folder name for the button label" },
+                "displayPath": { "type": "string", "description": "Full path for the tooltip" }
+              },
+              "required": ["id", "name", "displayPath"]
+            }
+          }
+        ]
+      }
+    ],
+
+    "events": [
+      {
+        "name": "onFolderClicked",
+        "type": "function",
+        "description": "Fired when the user clicks a pinned-folder button.",
+        "parameters": [
+          { "name": "folderId", "type": "string" }
+        ]
+      },
+      {
+        "name": "onFolderDropped",
+        "type": "function",
+        "description": "Fired when messages are dropped onto a pinned-folder button.",
+        "parameters": [
+          { "name": "folderId", "type": "string" }
+        ]
+      },
+      {
+        "name": "onFolderUnpinRequested",
+        "type": "function",
+        "description": "Fired when the user right-clicks and selects Remove from a pinned button.",
+        "parameters": [
+          { "name": "folderId", "type": "string" }
+        ]
+      }
+    ]
+  }
+]

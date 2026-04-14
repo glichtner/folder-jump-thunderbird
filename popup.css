@@ -1,0 +1,171 @@
+/* ── Reset ─────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: 'Segoe UI', Tahoma, sans-serif;
+  font-size: 13px;
+  background: #1e1e1e;
+  color: #cccccc;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Mode label ──────────────────────────────────────────────────────── */
+#mode-label {
+  padding: 6px 12px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: #569cd6;
+  flex-shrink: 0;
+}
+
+/* ── Search row ──────────────────────────────────────────────────────── */
+#search-wrap {
+  display: flex;
+  align-items: center;
+  padding: 0 12px 6px;
+  flex-shrink: 0;
+}
+
+#search-icon {
+  font-size: 16px;
+  color: #569cd6;
+  margin-right: 8px;
+  line-height: 1;
+}
+
+#search {
+  flex: 1;
+  padding: 6px 0;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid #007acc;
+  color: #d4d4d4;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+}
+
+#search::placeholder {
+  color: #555;
+}
+
+/* ── Folder list ─────────────────────────────────────────────────────── */
+#folder-list {
+  flex: 1;
+  overflow-y: auto;
+  list-style: none;
+  padding: 4px 0;
+}
+
+#folder-list li {
+  display: flex;
+  align-items: center;
+  padding: 3px 12px 3px 14px;
+  cursor: pointer;
+  line-height: 1.55;
+  border-left: 2px solid transparent;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+#folder-list li:hover {
+  background: #2a2d2e;
+}
+
+#folder-list li.selected {
+  background: #094771;
+  border-left-color: #007acc;
+  color: #fff;
+}
+
+#folder-list li.recent {
+  border-left-color: #6a9955;
+}
+#folder-list li.recent.selected {
+  border-left-color: #8bc37a;
+}
+
+/* Folder path text — grows to fill, truncates with ellipsis */
+.folder-path {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Highlight matching characters */
+.folder-path mark {
+  background: transparent;
+  color: #f4c94b;
+  font-weight: 600;
+}
+
+/* Pin star */
+.pin-btn {
+  margin-left: 8px;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+  opacity: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #c0a030;
+  padding: 1px 3px;
+  transition: opacity .1s;
+}
+
+#folder-list li:hover .pin-btn,
+#folder-list li.selected .pin-btn {
+  opacity: .7;
+}
+
+.pin-btn:hover {
+  opacity: 1 !important;
+}
+
+.pin-btn.pinned {
+  opacity: 1 !important;
+  color: #f4c94b;
+}
+
+/* Empty state */
+.empty-msg {
+  padding: 16px 14px;
+  color: #555;
+  font-style: italic;
+  pointer-events: none;
+}
+
+/* ── Hint bar ────────────────────────────────────────────────────────── */
+#hint-bar {
+  display: flex;
+  gap: 16px;
+  padding: 5px 14px;
+  border-top: 1px solid #333;
+  color: #555;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+kbd {
+  background: #2d2d2d;
+  border: 1px solid #444;
+  border-radius: 2px;
+  padding: 0 4px;
+  font-family: inherit;
+  font-size: 11px;
+  color: #999;
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────────────── */
+#folder-list::-webkit-scrollbar          { width: 5px; }
+#folder-list::-webkit-scrollbar-track   { background: #1e1e1e; }
+#folder-list::-webkit-scrollbar-thumb   { background: #3c3c3c; border-radius: 3px; }

@@ -1,0 +1,57 @@
+{
+  "manifest_version": 2,
+  "name": "Folder Jump",
+  "description": "Fuzzy-find folders to move mail or jump to them. Pin favourite folders to a quick-access bar.",
+  "version": "1.0.0",
+  "author": "Personal",
+
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "folder-jump@personal",
+      "strict_min_version": "115.0"
+    }
+  },
+
+  "permissions": [
+    "accountsRead",
+    "messagesRead",
+    "messagesMove",
+    "storage"
+  ],
+
+  "commands": {
+    "move-to-folder": {
+      "suggested_key": { "default": "Ctrl+Shift+Period" },
+      "description": "Move selected message to a folder"
+    },
+    "jump-to-folder": {
+      "suggested_key": { "default": "Ctrl+Period" },
+      "description": "Jump to a folder"
+    }
+  },
+
+  "background": {
+    "scripts": ["background.js"]
+  },
+
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+
+  "experiment_apis": {
+    "folderjump": {
+      "schema":  "api/schema.json",
+      "parent": {
+        "scopes": ["addon_parent"],
+        "script": "api/implementation.js",
+        "paths":  [["folderjump"]]
+      }
+    }
+  },
+
+  "icons": {
+    "48": "icons/icon.svg",
+    "96": "icons/icon.svg"
+  }
+}

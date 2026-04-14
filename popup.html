@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Folder Jump</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div id="mode-label"></div>
+
+  <div id="search-wrap">
+    <span id="search-icon">›</span>
+    <input
+      id="search"
+      type="text"
+      autocomplete="off"
+      spellcheck="false"
+      placeholder="Type to filter folders…"
+    />
+  </div>
+
+  <ul id="folder-list" role="listbox"></ul>
+
+  <div id="hint-bar">
+    <span><kbd>↑↓</kbd> navigate</span>
+    <span><kbd>↵</kbd> select</span>
+    <span><kbd>★</kbd> pin / unpin</span>
+    <span><kbd>Esc</kbd> clear</span>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

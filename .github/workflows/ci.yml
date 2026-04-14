@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+
+      - run: npm install --global web-ext
+
+      - name: Lint (non-blocking)
+        run: web-ext lint --source-dir=. --self-hosted
+        continue-on-error: true
+
+      - name: Build unsigned XPI
+        run: |
+          mkdir -p artifacts
+          web-ext build --source-dir=. --artifacts-dir=artifacts --overwrite-dest
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: folder-jump-unsigned
+          path: artifacts/*.zip

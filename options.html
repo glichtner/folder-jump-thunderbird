@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Folder Jump — Options</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <h1>Folder Jump</h1>
+  <p class="hint">Click a field and press the desired key combination. Modifiers (Ctrl, Shift, Alt) plus one key. Press <kbd>Esc</kbd> to cancel, <kbd>Backspace</kbd> to clear.</p>
+
+  <div class="row">
+    <label for="sc-jump">Jump to folder</label>
+    <input id="sc-jump" type="text" readonly placeholder="Click and press keys…">
+    <button data-reset="jump-to-folder" class="reset">Reset</button>
+  </div>
+
+  <div class="row">
+    <label for="sc-move">Move to folder</label>
+    <input id="sc-move" type="text" readonly placeholder="Click and press keys…">
+    <button data-reset="move-to-folder" class="reset">Reset</button>
+  </div>
+
+  <p id="status" class="status"></p>
+
+  <p class="hint small">Shortcuts also editable via <em>Add-ons Manager → Folder Jump → Manage Extension Shortcuts</em>.</p>
+
+  <script src="options.js"></script>
+</body>
+</html>
