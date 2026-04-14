@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "Folder Jump",
   "description": "Fuzzy-find folders to move mail or jump to them. Pin favourite folders to a quick-access bar.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Personal",
 
   "browser_specific_settings": {
