@@ -72,91 +72,33 @@ Two places, both work:
 
 ---
 
-## Publishing to [addons.thunderbird.net](https://addons.thunderbird.net) (ATN)
-
-ATN accepts WebExtension Experiments but reviews them more strictly
-than pure MailExtensions, since an experiment runs with privileged
-access. Expect a longer review cycle and possible rework requests.
-
-Steps:
-
-1. **Create an ATN account** at https://addons.thunderbird.net and verify email.
-2. **Bump the version** in `manifest.json` for every upload (ATN rejects duplicate versions).
-3. **Build the XPI** (same `zip` command as above). Keep the archive
-   under 10 MB and ensure `manifest.json` is at the *root* of the zip,
-   not inside a subfolder.
-4. **Submit** via *Developer Hub → Submit a New Add-on*:
-   - Choose **On this site** for public listing (or **On your own** to
-     get a signed XPI you distribute yourself — recommended while
-     iterating).
-   - Upload the XPI, pick supported Thunderbird versions.
-   - Provide a source-code link (GitHub repo) — required for any
-     add-on using experiments.
-5. **Respond to the reviewer** — they usually ask about the privileged
-   code in `api/implementation.js` and why a standard MailExtension API
-   isn't sufficient.
-
-See the official guide: https://extensionworkshop.com/documentation/publish/submitting-an-add-on/
-
----
-
-## Automated releases (GitHub Actions)
+## Releases (GitHub Actions)
 
 This repo ships two workflows:
 
-- `.github/workflows/ci.yml` — builds an unsigned XPI on every push/PR.
-- `.github/workflows/release.yml` — builds **and signs** the XPI via
-  ATN's unlisted channel, then attaches it to a GitHub Release.
+- `.github/workflows/ci.yml` — builds an unsigned XPI on every push/PR
+  and uploads it as a workflow artifact.
+- `.github/workflows/release.yml` — on a `v*` tag push, builds the XPI
+  and attaches it to a GitHub Release.
 
-Signed via the unlisted channel means the resulting XPI installs on
-any Thunderbird without requiring users to flip
-`xpinstall.signatures.required`.
-
-### One-time setup
-
-1. **Get ATN API credentials**
-   Log in at https://addons.thunderbird.net → *Developer Hub* →
-   *Manage API Keys*. Generate a JWT issuer + secret.
-
-2. **Add them as GitHub secrets**
-   Repo → *Settings* → *Secrets and variables* → *Actions* → *New secret*:
-   - `ATN_JWT_ISSUER` — the "JWT issuer" string
-   - `ATN_JWT_SECRET` — the "JWT secret" string
-
-3. **Publish the add-on listing once** (first time only)
-   ATN requires the add-on ID (`folder-jump@personal` in
-   `manifest.json`) to be registered under your account before the
-   signing API will accept uploads. Submit once manually via the
-   Developer Hub (pick *On your own* / unlisted). After that, all
-   future version uploads are handled by the workflow.
+Since Thunderbird requires signed add-ons by default and this project
+is **self-hosted** (not published to addons.thunderbird.net), users
+installing the XPI must flip `xpinstall.signatures.required` to `false`
+in `about:config`. See the install section above.
 
 ### Cutting a release
 
 ```bash
-# 1. Bump manifest.json "version" (e.g. 1.0.0 → 1.0.1)
+# 1. Bump manifest.json "version" (e.g. 1.0.1 → 1.0.2)
 # 2. Commit
-git commit -am "Release v1.0.1"
+git commit -am "Release v1.0.2"
 # 3. Tag and push
-git tag v1.0.1
+git tag v1.0.2
 git push origin main --tags
 ```
 
-The `release.yml` workflow:
-
-1. Verifies the tag matches `manifest.json` version.
-2. Runs `web-ext lint` (non-blocking — experiments trip warnings).
-3. Calls `web-ext sign` against ATN (`--channel=unlisted`).
-4. Attaches the signed `.xpi` to a GitHub Release with auto-generated notes.
-
-Users can now download the XPI from the Releases page and drag it into
-Thunderbird — no preferences changes needed.
-
-### Alternative: fully public ATN listing
-
-If you want the add-on discoverable on ATN (not just self-hosted), drop
-`--channel=unlisted` from `release.yml` or change it to `listed`.
-Expect manual review; the first version must still be submitted
-through the Developer Hub UI.
+The workflow verifies the tag matches `manifest.json`, builds the XPI,
+and publishes a GitHub Release with auto-generated notes.
 
 ---
 
