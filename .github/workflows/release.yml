@@ -44,7 +44,7 @@ jobs:
             --source-dir=. \
             --artifacts-dir=artifacts \
             --channel=unlisted \
-            --api-url-prefix=https://addons.thunderbird.net/api/v4/ \
+            --amo-base-url=https://addons.thunderbird.net/api/v5/ \
             --api-key="$WEB_EXT_API_KEY" \
             --api-secret="$WEB_EXT_API_SECRET" \
             --timeout=900000
