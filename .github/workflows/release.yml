@@ -29,8 +29,8 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install web-ext
-        run: npm install --global web-ext
+      - name: Install web-ext (v7 — ATN still uses the v4 signing API)
+        run: npm install --global web-ext@7
 
       # web-ext lint skipped — uses Firefox rules, flags valid TB APIs.
 
@@ -44,7 +44,7 @@ jobs:
             --source-dir=. \
             --artifacts-dir=artifacts \
             --channel=unlisted \
-            --amo-base-url=https://addons.thunderbird.net/api/v5/ \
+            --api-url-prefix=https://addons.thunderbird.net/api/v4/ \
             --api-key="$WEB_EXT_API_KEY" \
             --api-secret="$WEB_EXT_API_SECRET" \
             --timeout=900000
