@@ -15,16 +15,17 @@ jobs:
 
       - run: npm install --global web-ext
 
-      - name: Lint (non-blocking)
-        run: web-ext lint --source-dir=. --self-hosted
-        continue-on-error: true
+      # Skipping web-ext lint: it uses Firefox API rules and flags all
+      # Thunderbird-only APIs as "unsupported". ATN has its own validator.
 
       - name: Build unsigned XPI
         run: |
           mkdir -p artifacts
           web-ext build --source-dir=. --artifacts-dir=artifacts --overwrite-dest
+          # Rename to .xpi so the artifact is directly installable
+          for f in artifacts/*.zip; do mv "$f" "${f%.zip}.xpi"; done
 
       - uses: actions/upload-artifact@v4
         with:
           name: folder-jump-unsigned
-          path: artifacts/*.zip
+          path: artifacts/*.xpi

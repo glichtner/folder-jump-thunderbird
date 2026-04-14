@@ -32,9 +32,7 @@ jobs:
       - name: Install web-ext
         run: npm install --global web-ext
 
-      - name: Lint
-        run: web-ext lint --source-dir=. --self-hosted
-        continue-on-error: true   # lint warns on experiment APIs; don't block release
+      # web-ext lint skipped — uses Firefox rules, flags valid TB APIs.
 
       - name: Sign XPI (ATN, unlisted channel)
         env:

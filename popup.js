@@ -215,12 +215,16 @@ function renderList() {
   const list = document.getElementById("folder-list");
   const needle = document.getElementById("search").value;
 
+  list.replaceChildren();
+
   if (filtered.length === 0) {
-    list.innerHTML = '<li class="empty-msg">No folders match</li>';
+    const empty = document.createElement("li");
+    empty.className = "empty-msg";
+    empty.textContent = "No folders match";
+    list.appendChild(empty);
     return;
   }
 
-  list.innerHTML = "";
   const frag = document.createDocumentFragment();
 
   const recentSet = !needle ? new Set(recentIds) : null;
@@ -236,7 +240,7 @@ function renderList() {
     // Path span with highlighted chars
     const span = document.createElement("span");
     span.className = "folder-path";
-    span.innerHTML = highlight(f.displayPath, needle);
+    appendHighlighted(span, f.displayPath, needle);
     li.appendChild(span);
 
     // Pin star button
@@ -268,19 +272,33 @@ function renderList() {
   if (sel) { sel.scrollIntoView({ block: "nearest" }); }
 }
 
-// Build HTML string with <mark> around fuzzy-matched characters
-function highlight(path, needle) {
-  if (!needle) { return escHtml(path); }
-  const hits = fuzzyMatch(needle, path);
-  if (!hits || hits.length === 0) { return escHtml(path); }
+// Append path text to container, wrapping fuzzy-matched chars in <mark>.
+// Uses DOM nodes (no innerHTML) for safety.
+function appendHighlighted(container, path, needle) {
+  const hits = needle ? fuzzyMatch(needle, path) : null;
+  if (!hits || hits.length === 0) {
+    container.textContent = path;
+    return;
+  }
   const hitSet = new Set(hits);
-  return path.split("").map((ch, i) =>
-    hitSet.has(i) ? `<mark>${escHtml(ch)}</mark>` : escHtml(ch)
-  ).join("");
-}
-
-function escHtml(s) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  let buf = "";
+  const flushBuf = () => {
+    if (buf) {
+      container.appendChild(document.createTextNode(buf));
+      buf = "";
+    }
+  };
+  for (let i = 0; i < path.length; i++) {
+    if (hitSet.has(i)) {
+      flushBuf();
+      const mark = document.createElement("mark");
+      mark.textContent = path[i];
+      container.appendChild(mark);
+    } else {
+      buf += path[i];
+    }
+  }
+  flushBuf();
 }
 
 // ── Actions ────────────────────────────────────────────────────────────
