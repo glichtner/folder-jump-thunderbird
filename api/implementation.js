@@ -24,9 +24,16 @@ this.folderjump = class extends ExtensionAPI {
 
   onShutdown(isAppShutdown) {
     if (isAppShutdown) { return; }
-    // Remove bar and context menu from every open 3-pane window.
     for (const win of Services.wm.getEnumerator("mail:3pane")) {
       _cleanup(win.document);
+      // Also clean bars inside any loaded about3Pane docs.
+      const tabmail = win.document.getElementById("tabmail");
+      for (const tab of (tabmail?.tabInfo || [])) {
+        const b = tab.browser || tab.linkedBrowser;
+        const innerDoc = b?.contentDocument;
+        if (innerDoc?.URL?.includes("about3Pane")) { _cleanup(innerDoc); }
+      }
+      tabmail?.removeAttribute?.("data-folderjump-hooked");
     }
   }
 
@@ -113,8 +120,78 @@ function _cleanup(doc) {
   doc.getElementById(MENU_ID)?.remove();
 }
 
-function _injectBar(doc, folders, clickListeners, dropListeners, unpinListeners) {
-  _cleanup(doc);
+// Entry point — refresh the bar in every relevant document inside `outerDoc`
+// (the messenger.xhtml chrome window). Tries to dock the bar above the
+// thread pane in each about3Pane; falls back to a fixed-top bar.
+function _injectBar(outerDoc, folders, clickListeners, dropListeners, unpinListeners) {
+  _cleanup(outerDoc);
+
+  const targets = _findThreadPaneTargets(outerDoc);
+
+  if (targets.length === 0) {
+    // Fallback: top-fixed bar in the chrome window itself.
+    _renderBarInDoc(outerDoc, null, folders, clickListeners, dropListeners, unpinListeners, /*fixedTop=*/true);
+  } else {
+    for (const t of targets) {
+      _renderBarInDoc(t.doc, t.beforeNode, folders, clickListeners, dropListeners, unpinListeners, /*fixedTop=*/false);
+    }
+  }
+
+  _attachTabListeners(outerDoc, () => folders, { clickListeners, dropListeners, unpinListeners });
+}
+
+// Walk the tabmail and collect every loaded about3Pane document plus the
+// node we want to insert the bar in front of (the thread pane).
+function _findThreadPaneTargets(outerDoc) {
+  const out = [];
+  const tabmail = outerDoc.getElementById("tabmail");
+  if (!tabmail) { return out; }
+
+  const browsers = [];
+  for (const tab of (tabmail.tabInfo || [])) {
+    const b = tab.browser || tab.linkedBrowser;
+    if (b) { browsers.push(b); }
+  }
+
+  for (const b of browsers) {
+    const innerDoc = b.contentDocument;
+    if (!innerDoc || !innerDoc.URL || !innerDoc.URL.includes("about3Pane")) { continue; }
+
+    const before = innerDoc.getElementById("threadPane")
+                 || innerDoc.getElementById("threadTree")
+                 || innerDoc.getElementById("threadPaneBox")
+                 || innerDoc.querySelector("[is='thread-listrow']")?.closest("tree, ul, div");
+    if (before && before.parentNode) {
+      out.push({ doc: innerDoc, beforeNode: before });
+    }
+  }
+  return out;
+}
+
+// Hook tab open/select events so newly-loaded about3Panes also get the bar.
+function _attachTabListeners(outerDoc, getFolders, listeners) {
+  const tabmail = outerDoc.getElementById("tabmail");
+  if (!tabmail || tabmail.dataset.folderjumpHooked === "1") { return; }
+  tabmail.dataset.folderjumpHooked = "1";
+
+  const refresh = () => {
+    const win = outerDoc.defaultView;
+    win.setTimeout(() => {
+      _injectBar(outerDoc, getFolders(),
+        listeners.clickListeners, listeners.dropListeners, listeners.unpinListeners);
+    }, 150);
+  };
+  tabmail.addEventListener("TabOpen",   refresh);
+  tabmail.addEventListener("TabSelect", refresh);
+}
+
+// Build and insert the bar inside `doc`. If `beforeNode` is given, the bar
+// is inserted in normal flow before it. If null and `fixedTop` is true, the
+// bar is fixed-positioned at the top of the document.
+function _renderBarInDoc(doc, beforeNode, folders, clickListeners, dropListeners, unpinListeners, fixedTop) {
+  // Clean any stale bar already in this doc.
+  doc.getElementById(BAR_ID)?.remove();
+  doc.getElementById(MENU_ID)?.remove();
 
   // ── Shared context menu ───────────────────────────────────────────
   const ctxMenu = _el(doc, "div", { id: MENU_ID });
@@ -157,24 +234,29 @@ function _injectBar(doc, folders, clickListeners, dropListeners, unpinListeners)
   // ── Bar shell ─────────────────────────────────────────────────────
   const bar = _el(doc, "div", { id: BAR_ID });
   Object.assign(bar.style, {
-    display:     "flex",
-    alignItems:  "center",
-    gap:         "4px",
-    padding:     "0 8px",
-    height:      "30px",
+    display:      "flex",
+    alignItems:   "center",
+    gap:          "4px",
+    padding:      "4px 8px",
+    minHeight:    "30px",
     background:   "#1e1e1e",
     borderBottom: "1px solid #007acc",
-    position:     "fixed",
-    top:          "0",
-    left:         "0",
-    right:        "0",
-    zIndex:      "9999",
-    fontFamily:  "'Segoe UI', Tahoma, sans-serif",
-    fontSize:    "12px",
-    flexShrink:  "0",
-    boxSizing:   "border-box",
-    userSelect:  "none"
+    fontFamily:   "'Segoe UI', Tahoma, sans-serif",
+    fontSize:     "12px",
+    flexShrink:   "0",
+    boxSizing:    "border-box",
+    userSelect:   "none",
+    overflow:     "hidden"
   });
+  if (fixedTop) {
+    Object.assign(bar.style, {
+      position: "fixed",
+      top:      "0",
+      left:     "0",
+      right:    "0",
+      zIndex:   "9999"
+    });
+  }
 
   // Label
   const label = _el(doc, "span");
@@ -268,17 +350,15 @@ function _injectBar(doc, folders, clickListeners, dropListeners, unpinListeners)
     bar.appendChild(btn);
   }
 
-  // Insert bar at the top of the window (before the tab strip if found).
-  const anchor = doc.getElementById("tabmail-tabbox")
-               || doc.getElementById("messengerBody")
-               || doc.querySelector("[id$='TabBox']")
-               || null;
-  if (anchor && anchor.parentNode) {
-    anchor.parentNode.insertBefore(bar, anchor);
-  } else if (doc.body.firstChild) {
+  // Insert.
+  if (beforeNode && beforeNode.parentNode) {
+    beforeNode.parentNode.insertBefore(bar, beforeNode);
+  } else if (doc.body && doc.body.firstChild) {
     doc.body.insertBefore(bar, doc.body.firstChild);
-  } else {
+  } else if (doc.body) {
     doc.body.appendChild(bar);
+  } else {
+    doc.documentElement.appendChild(bar);
   }
 }
 

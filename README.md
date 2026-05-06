@@ -58,7 +58,8 @@ Thunderbird requires signed add-ons by default. To install unsigned:
    ```
    or on PowerShell:
    ```powershell
-   Compress-Archive -Path .\manifest.json,.\background.js,.\popup.*,.\options.*,.\api,.\icons -DestinationPath ..\folder-jump.xpi -Force
+   Compress-Archive -Path .\manifest.json,.\background.js,.\popup.*,.\options.*,.\api,.\icons -DestinationPath ..\folder-jump.zip -Force
+   Move-Item -Force ..\folder-jump.zip ..\folder-jump.xpi
    ```
 3. **Add-ons Manager** → cog ⚙ → **Install Add-on From File…** → pick `folder-jump.xpi`.
 
