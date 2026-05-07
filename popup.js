@@ -313,7 +313,13 @@ async function togglePin(folder) {
   try {
     const resp = await browser.runtime.sendMessage({
       action: "togglePin",
-      folder: { id: folder.id, name: folder.name, displayPath: folder.displayPath }
+      folder: {
+        id: folder.id,
+        accountId: folder.accountId,
+        path: folder.path,
+        name: folder.name,
+        displayPath: folder.displayPath
+      }
     });
     if (resp?.pinnedIds) {
       pinnedIds = new Set(resp.pinnedIds);

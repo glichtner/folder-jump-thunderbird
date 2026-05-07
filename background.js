@@ -157,8 +157,10 @@ browser.runtime.onMessage.addListener(async (msg) => {
     const mailFolder = { accountId: folder.accountId, path: folder.path };
 
     if (mode === "move" && messageId != null) {
-      await browser.messages.move([messageId], mailFolder);
+      // TB 121+ wants the MailFolderId string here.
+      await browser.messages.move([messageId], folder.id);
     } else if (mode === "jump") {
+      // MV2 mailTabs.update still wants the {accountId, path} MailFolder object.
       await browser.mailTabs.update(tabId, { displayedFolder: mailFolder });
     }
     await recordRecent(folder.id);
@@ -184,8 +186,18 @@ browser.runtime.onMessage.addListener(async (msg) => {
 browser.folderjump.onFolderClicked.addListener(async (folderId) => {
   const [mailTab] = await browser.mailTabs.query({ active: true, currentWindow: true });
   if (!mailTab) { return; }
-  await browser.mailTabs.update(mailTab.id, { displayedFolderId: folderId });
+  const folder = await pinnedFolderById(folderId);
+  if (!folder) { return; }
+  await browser.mailTabs.update(mailTab.id, {
+    displayedFolder: { accountId: folder.accountId, path: folder.path }
+  });
+  await recordRecent(folderId);
 });
+
+async function pinnedFolderById(id) {
+  const { pinnedFolders = [] } = await browser.storage.local.get("pinnedFolders");
+  return pinnedFolders.find(f => f.id === id);
+}
 
 browser.folderjump.onFolderDropped.addListener(async (folderId) => {
   const [mailTab] = await browser.mailTabs.query({ active: true, currentWindow: true });
