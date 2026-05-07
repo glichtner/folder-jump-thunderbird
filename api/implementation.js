@@ -123,14 +123,23 @@ function _cleanup(doc) {
 // Entry point — refresh the bar in every relevant document inside `outerDoc`
 // (the messenger.xhtml chrome window). Tries to dock the bar above the
 // thread pane in each about3Pane; falls back to a fixed-top bar.
-function _injectBar(outerDoc, folders, clickListeners, dropListeners, unpinListeners) {
+function _injectBar(outerDoc, folders, clickListeners, dropListeners, unpinListeners, _retries) {
   _cleanup(outerDoc);
 
   const targets = _findThreadPaneTargets(outerDoc);
 
   if (targets.length === 0) {
-    // Fallback: top-fixed bar in the chrome window itself.
-    _renderBarInDoc(outerDoc, null, folders, clickListeners, dropListeners, unpinListeners, /*fixedTop=*/true);
+    const tries = _retries || 0;
+    if (tries < 6) {
+      // about3Pane probably still loading — retry shortly.
+      const win = outerDoc.defaultView;
+      win.setTimeout(() => {
+        _injectBar(outerDoc, folders, clickListeners, dropListeners, unpinListeners, tries + 1);
+      }, 500);
+    } else {
+      _log("giving up after retries; using top-fixed fallback");
+      _renderBarInDoc(outerDoc, null, folders, clickListeners, dropListeners, unpinListeners, /*fixedTop=*/true);
+    }
   } else {
     for (const t of targets) {
       _renderBarInDoc(t.doc, t.beforeNode, folders, clickListeners, dropListeners, unpinListeners, /*fixedTop=*/false);
@@ -144,80 +153,42 @@ function _injectBar(outerDoc, folders, clickListeners, dropListeners, unpinListe
 // node we want to insert the bar in front of (the thread pane).
 function _findThreadPaneTargets(outerDoc) {
   const out = [];
-  const tabmail = outerDoc.getElementById("tabmail");
-  const candidates = new Set();
+  // TB 115+: each mail tab is hosted in <browser id="mail3PaneTabBrowserN">
+  // whose contentDocument is the about3Pane.xhtml document.
+  const mailBrowsers = outerDoc.querySelectorAll('browser[id^="mail3PaneTabBrowser"]');
+  _log("mail3Pane browsers:", mailBrowsers.length);
 
-  // Primary: TB 115+ exposes the active mail tab's inner Window directly.
-  if (tabmail && tabmail.currentAbout3Pane && tabmail.currentAbout3Pane.document) {
-    candidates.add(tabmail.currentAbout3Pane.document);
-  }
+  for (const b of mailBrowsers) {
+    const innerDoc = b.contentDocument;
+    const url = innerDoc?.URL ?? "(null)";
+    const ready = innerDoc?.readyState ?? "(n/a)";
+    _log(b.id, "url:", url, "readyState:", ready);
 
-  // Scan all <browser> elements for about3Pane content.
-  for (const browser of outerDoc.querySelectorAll("browser")) {
-    const innerDoc = browser.contentDocument;
-    if (innerDoc && innerDoc.URL && innerDoc.URL.includes("about3Pane")) {
-      candidates.add(innerDoc);
-    }
-  }
+    if (!innerDoc || !innerDoc.URL || !innerDoc.URL.includes("about3Pane")) { continue; }
 
-  // Also walk tabInfo (covers some TB builds where the above misses).
-  if (tabmail) {
-    for (const tab of (tabmail.tabInfo || [])) {
-      const b = tab.browser || tab.linkedBrowser || tab.chromeBrowser;
-      const innerDoc = b && b.contentDocument;
-      if (innerDoc && innerDoc.URL && innerDoc.URL.includes("about3Pane")) {
-        candidates.add(innerDoc);
-      }
-    }
-  }
-
-  _log("found", candidates.size, "about3Pane doc(s)");
-
-  // No about3Pane? Try anchors directly in the chrome (outer) document — older
-  // TB layouts and some Exchange-connector builds keep the thread tree inline.
-  if (candidates.size === 0) {
-    const OUTER_IDS = [
-      "threadTree", "threadContentArea", "threadPaneBox", "threadPane",
-      "messagepanebox", "messagepaneboxwrapper", "displayDeck", "messagesBox"
-    ];
-    let outerBefore = null;
-    for (const id of OUTER_IDS) {
-      const el = outerDoc.getElementById(id);
-      if (el && el.parentNode) { outerBefore = el; _log("outer anchor:", "#" + id); break; }
-    }
-    if (!outerBefore) {
-      // Diagnostics: dump every element in outerDoc whose id mentions thread/pane/message.
-      const all = outerDoc.querySelectorAll("[id]");
-      const matching = [];
-      for (const el of all) {
-        if (/thread|pane|message|mail/i.test(el.id)) { matching.push(el.id); }
-      }
-      _log("no outer anchor matched; candidate ids in outer doc:", matching.join(", ") || "(none)");
-    }
-    if (outerBefore) {
-      out.push({ doc: outerDoc, beforeNode: outerBefore });
-    }
-  }
-
-  for (const innerDoc of candidates) {
-    // Try to find a sensible anchor inside the about3Pane.
-    const before =
+    const anchor =
          innerDoc.getElementById("threadPane")
       || innerDoc.getElementById("threadPaneBrowser")
       || innerDoc.getElementById("threadPaneHeader")
       || innerDoc.getElementById("threadTree")
       || innerDoc.getElementById("messagePaneSplitter")
-      || innerDoc.querySelector("tree-view-listbox")
-      || innerDoc.querySelector("#threadPaneBox")
       || innerDoc.body?.firstChild
       || null;
 
-    _log("anchor for inner doc:", before && before.id ? "#" + before.id : (before?.tagName ?? "(none)"));
+    if (!anchor) {
+      // Dump inner ids so we can pick a real anchor next round.
+      const ids = [];
+      for (const el of innerDoc.querySelectorAll("[id]")) {
+        if (/thread|pane|message/i.test(el.id)) { ids.push(el.id); }
+      }
+      _log("  inner candidate ids:", ids.join(", ") || "(none)");
+    } else {
+      _log("  inner anchor:", anchor.id ? "#" + anchor.id : anchor.tagName);
+    }
 
-    if (before && before.parentNode) {
-      out.push({ doc: innerDoc, beforeNode: before });
+    if (anchor && anchor.parentNode) {
+      out.push({ doc: innerDoc, beforeNode: anchor });
     } else if (innerDoc.body) {
-      // Last resort: prepend to body of about3Pane.
       out.push({ doc: innerDoc, beforeNode: innerDoc.body.firstChild });
     }
   }
