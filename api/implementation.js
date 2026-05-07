@@ -381,9 +381,12 @@ function _renderBarInDoc(doc, container, beforeNode, folders, clickListeners, dr
     bar.appendChild(btn);
   }
 
-  // Insert.
+  // Insert. Recompute the insertion point if `beforeNode` is now detached
+  // (e.g. it was the old bar we just removed).
   if (container) {
-    container.insertBefore(bar, beforeNode || null);
+    let target = beforeNode;
+    if (target && target.parentNode !== container) { target = null; }
+    container.insertBefore(bar, target ?? container.firstChild);
   } else if (doc.body) {
     doc.body.insertBefore(bar, doc.body.firstChild);
   } else {
