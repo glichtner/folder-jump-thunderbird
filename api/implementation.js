@@ -145,27 +145,61 @@ function _injectBar(outerDoc, folders, clickListeners, dropListeners, unpinListe
 function _findThreadPaneTargets(outerDoc) {
   const out = [];
   const tabmail = outerDoc.getElementById("tabmail");
-  if (!tabmail) { return out; }
+  const candidates = new Set();
 
-  const browsers = [];
-  for (const tab of (tabmail.tabInfo || [])) {
-    const b = tab.browser || tab.linkedBrowser;
-    if (b) { browsers.push(b); }
+  // Primary: TB 115+ exposes the active mail tab's inner Window directly.
+  if (tabmail && tabmail.currentAbout3Pane && tabmail.currentAbout3Pane.document) {
+    candidates.add(tabmail.currentAbout3Pane.document);
   }
 
-  for (const b of browsers) {
-    const innerDoc = b.contentDocument;
-    if (!innerDoc || !innerDoc.URL || !innerDoc.URL.includes("about3Pane")) { continue; }
+  // Scan all <browser> elements for about3Pane content.
+  for (const browser of outerDoc.querySelectorAll("browser")) {
+    const innerDoc = browser.contentDocument;
+    if (innerDoc && innerDoc.URL && innerDoc.URL.includes("about3Pane")) {
+      candidates.add(innerDoc);
+    }
+  }
 
-    const before = innerDoc.getElementById("threadPane")
-                 || innerDoc.getElementById("threadTree")
-                 || innerDoc.getElementById("threadPaneBox")
-                 || innerDoc.querySelector("[is='thread-listrow']")?.closest("tree, ul, div");
+  // Also walk tabInfo (covers some TB builds where the above misses).
+  if (tabmail) {
+    for (const tab of (tabmail.tabInfo || [])) {
+      const b = tab.browser || tab.linkedBrowser || tab.chromeBrowser;
+      const innerDoc = b && b.contentDocument;
+      if (innerDoc && innerDoc.URL && innerDoc.URL.includes("about3Pane")) {
+        candidates.add(innerDoc);
+      }
+    }
+  }
+
+  _log("found", candidates.size, "about3Pane doc(s)");
+
+  for (const innerDoc of candidates) {
+    // Try to find a sensible anchor inside the about3Pane.
+    const before =
+         innerDoc.getElementById("threadPane")
+      || innerDoc.getElementById("threadPaneBrowser")
+      || innerDoc.getElementById("threadPaneHeader")
+      || innerDoc.getElementById("threadTree")
+      || innerDoc.getElementById("messagePaneSplitter")
+      || innerDoc.querySelector("tree-view-listbox")
+      || innerDoc.querySelector("#threadPaneBox")
+      || innerDoc.body?.firstChild
+      || null;
+
+    _log("anchor for inner doc:", before && before.id ? "#" + before.id : (before?.tagName ?? "(none)"));
+
     if (before && before.parentNode) {
       out.push({ doc: innerDoc, beforeNode: before });
+    } else if (innerDoc.body) {
+      // Last resort: prepend to body of about3Pane.
+      out.push({ doc: innerDoc, beforeNode: innerDoc.body.firstChild });
     }
   }
   return out;
+}
+
+function _log(...args) {
+  try { Services.console.logStringMessage("[FolderJump] " + args.map(String).join(" ")); } catch (_) {}
 }
 
 // Hook tab open/select events so newly-loaded about3Panes also get the bar.
