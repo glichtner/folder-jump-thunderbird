@@ -131,18 +131,17 @@ function _injectBar(outerDoc, folders, clickListeners, dropListeners, unpinListe
   if (targets.length === 0) {
     const tries = _retries || 0;
     if (tries < 6) {
-      // about3Pane probably still loading — retry shortly.
       const win = outerDoc.defaultView;
       win.setTimeout(() => {
         _injectBar(outerDoc, folders, clickListeners, dropListeners, unpinListeners, tries + 1);
       }, 500);
     } else {
       _log("giving up after retries; using top-fixed fallback");
-      _renderBarInDoc(outerDoc, null, folders, clickListeners, dropListeners, unpinListeners, /*fixedTop=*/true);
+      _renderBarInDoc(outerDoc, outerDoc.body, null, folders, clickListeners, dropListeners, unpinListeners, /*fixedTop=*/true);
     }
   } else {
     for (const t of targets) {
-      _renderBarInDoc(t.doc, t.beforeNode, folders, clickListeners, dropListeners, unpinListeners, /*fixedTop=*/false);
+      _renderBarInDoc(t.doc, t.container, t.beforeNode, folders, clickListeners, dropListeners, unpinListeners, /*fixedTop=*/false);
     }
   }
 
@@ -166,30 +165,31 @@ function _findThreadPaneTargets(outerDoc) {
 
     if (!innerDoc || !innerDoc.URL || !/3pane/i.test(innerDoc.URL)) { continue; }
 
-    const anchor =
-         innerDoc.getElementById("threadPane")
-      || innerDoc.getElementById("threadPaneBrowser")
-      || innerDoc.getElementById("threadPaneHeader")
+    // Prefer prepending INSIDE the thread pane container so the bar lives
+    // within the thread-pane grid cell (sibling-insertion would steal a
+    // whole grid row).
+    const threadPane = innerDoc.getElementById("threadPane");
+    if (threadPane) {
+      _log("  prepending into #threadPane");
+      out.push({ doc: innerDoc, container: threadPane, beforeNode: threadPane.firstChild });
+      continue;
+    }
+
+    const sibling =
+         innerDoc.getElementById("threadPaneHeader")
       || innerDoc.getElementById("threadTree")
-      || innerDoc.getElementById("messagePaneSplitter")
       || innerDoc.body?.firstChild
       || null;
 
-    if (!anchor) {
-      // Dump inner ids so we can pick a real anchor next round.
+    if (sibling && sibling.parentNode) {
+      _log("  inserting before:", sibling.id ? "#" + sibling.id : sibling.tagName);
+      out.push({ doc: innerDoc, container: sibling.parentNode, beforeNode: sibling });
+    } else {
       const ids = [];
       for (const el of innerDoc.querySelectorAll("[id]")) {
         if (/thread|pane|message/i.test(el.id)) { ids.push(el.id); }
       }
-      _log("  inner candidate ids:", ids.join(", ") || "(none)");
-    } else {
-      _log("  inner anchor:", anchor.id ? "#" + anchor.id : anchor.tagName);
-    }
-
-    if (anchor && anchor.parentNode) {
-      out.push({ doc: innerDoc, beforeNode: anchor });
-    } else if (innerDoc.body) {
-      out.push({ doc: innerDoc, beforeNode: innerDoc.body.firstChild });
+      _log("  no anchor; ids:", ids.join(", ") || "(none)");
     }
   }
   return out;
@@ -219,7 +219,7 @@ function _attachTabListeners(outerDoc, getFolders, listeners) {
 // Build and insert the bar inside `doc`. If `beforeNode` is given, the bar
 // is inserted in normal flow before it. If null and `fixedTop` is true, the
 // bar is fixed-positioned at the top of the document.
-function _renderBarInDoc(doc, beforeNode, folders, clickListeners, dropListeners, unpinListeners, fixedTop) {
+function _renderBarInDoc(doc, container, beforeNode, folders, clickListeners, dropListeners, unpinListeners, fixedTop) {
   // Clean any stale bar already in this doc.
   doc.getElementById(BAR_ID)?.remove();
   doc.getElementById(MENU_ID)?.remove();
@@ -382,12 +382,10 @@ function _renderBarInDoc(doc, beforeNode, folders, clickListeners, dropListeners
   }
 
   // Insert.
-  if (beforeNode && beforeNode.parentNode) {
-    beforeNode.parentNode.insertBefore(bar, beforeNode);
-  } else if (doc.body && doc.body.firstChild) {
-    doc.body.insertBefore(bar, doc.body.firstChild);
+  if (container) {
+    container.insertBefore(bar, beforeNode || null);
   } else if (doc.body) {
-    doc.body.appendChild(bar);
+    doc.body.insertBefore(bar, doc.body.firstChild);
   } else {
     doc.documentElement.appendChild(bar);
   }
