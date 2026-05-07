@@ -18,9 +18,12 @@
               "type": "object",
               "properties": {
                 "id":          { "type": "string", "description": "MailFolderId" },
+                "accountId":   { "type": "string", "optional": true },
+                "path":        { "type": "string", "optional": true },
                 "name":        { "type": "string", "description": "Short folder name for the button label" },
                 "displayPath": { "type": "string", "description": "Full path for the tooltip" }
               },
+              "additionalProperties": { "type": "any" },
               "required": ["id", "name", "displayPath"]
             }
           }
