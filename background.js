@@ -21,6 +21,10 @@ let pendingCtx = null;
 // ── Keyboard commands ──────────────────────────────────────────────────
 browser.commands.onCommand.addListener(async (command) => {
   console.log("[FolderJump] command fired:", command);
+  if (command === "undo-move") {
+    await undoLastMove();
+    return;
+  }
   if (command !== "move-to-folder" && command !== "jump-to-folder") { return; }
   const mode = command === "move-to-folder" ? "move" : "jump";
   try {
@@ -29,6 +33,42 @@ browser.commands.onCommand.addListener(async (command) => {
     console.error("[FolderJump] openPalette failed:", err);
   }
 });
+
+// ── Move history (for Ctrl+Z undo) ─────────────────────────────────────
+// Listen to every move (whether triggered by us or by Thunderbird's UI)
+// and keep a stack of recent ones. Undo pops the top and moves the
+// affected messages back to their previous folder.
+const MAX_HISTORY = 25;
+const moveHistory = [];
+
+browser.messages.onMoved.addListener((originals, moveds) => {
+  const orig = originals?.messages ?? [];
+  const moved = moveds?.messages ?? [];
+  if (!orig.length || !moved.length) { return; }
+  const fromFolder = orig[0].folder;
+  if (!fromFolder) { return; }
+  moveHistory.push({
+    fromFolder: {
+      id:        fromFolder.id,
+      accountId: fromFolder.accountId,
+      path:      fromFolder.path
+    },
+    newIds: moved.map(m => m.id)
+  });
+  while (moveHistory.length > MAX_HISTORY) { moveHistory.shift(); }
+});
+
+async function undoLastMove() {
+  const last = moveHistory.pop();
+  if (!last) { console.log("[FolderJump] undo: history empty"); return; }
+  const dest = last.fromFolder.id
+    ?? { accountId: last.fromFolder.accountId, path: last.fromFolder.path };
+  try {
+    await browser.messages.move(last.newIds, dest);
+  } catch (err) {
+    console.error("[FolderJump] undo failed:", err);
+  }
+}
 
 async function openPalette(mode) {
   console.log("[FolderJump] openPalette start, mode =", mode);

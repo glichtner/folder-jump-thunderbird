@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "Folder Jump",
   "description": "Fuzzy-find folders to move mail or jump to them. Pin favourite folders to a quick-access bar.",
-  "version": "1.1.6",
+  "version": "1.2.0",
   "author": "Personal",
 
   "browser_specific_settings": {
@@ -27,6 +27,10 @@
     "jump-to-folder": {
       "suggested_key": { "default": "Ctrl+Period" },
       "description": "Jump to a folder"
+    },
+    "undo-move": {
+      "suggested_key": { "default": "Ctrl+Z" },
+      "description": "Undo the last folder move"
     }
   },
 

@@ -2,12 +2,14 @@
 
 const DEFAULTS = {
   "jump-to-folder": "Ctrl+Period",
-  "move-to-folder": "Ctrl+Shift+Period"
+  "move-to-folder": "Ctrl+Shift+Period",
+  "undo-move":      "Ctrl+Z"
 };
 
 const FIELDS = {
   "jump-to-folder": "sc-jump",
-  "move-to-folder": "sc-move"
+  "move-to-folder": "sc-move",
+  "undo-move":      "sc-undo"
 };
 
 const statusEl = document.getElementById("status");
