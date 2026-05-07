@@ -31,7 +31,7 @@ this.folderjump = class extends ExtensionAPI {
       for (const tab of (tabmail?.tabInfo || [])) {
         const b = tab.browser || tab.linkedBrowser;
         const innerDoc = b?.contentDocument;
-        if (innerDoc?.URL?.includes("about3Pane")) { _cleanup(innerDoc); }
+        if (innerDoc?.URL && /3pane/i.test(innerDoc.URL)) { _cleanup(innerDoc); }
       }
       tabmail?.removeAttribute?.("data-folderjump-hooked");
     }
@@ -164,7 +164,7 @@ function _findThreadPaneTargets(outerDoc) {
     const ready = innerDoc?.readyState ?? "(n/a)";
     _log(b.id, "url:", url, "readyState:", ready);
 
-    if (!innerDoc || !innerDoc.URL || !innerDoc.URL.includes("about3Pane")) { continue; }
+    if (!innerDoc || !innerDoc.URL || !/3pane/i.test(innerDoc.URL)) { continue; }
 
     const anchor =
          innerDoc.getElementById("threadPane")
