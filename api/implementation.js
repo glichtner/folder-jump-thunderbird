@@ -173,6 +173,32 @@ function _findThreadPaneTargets(outerDoc) {
 
   _log("found", candidates.size, "about3Pane doc(s)");
 
+  // No about3Pane? Try anchors directly in the chrome (outer) document — older
+  // TB layouts and some Exchange-connector builds keep the thread tree inline.
+  if (candidates.size === 0) {
+    const OUTER_IDS = [
+      "threadTree", "threadContentArea", "threadPaneBox", "threadPane",
+      "messagepanebox", "messagepaneboxwrapper", "displayDeck", "messagesBox"
+    ];
+    let outerBefore = null;
+    for (const id of OUTER_IDS) {
+      const el = outerDoc.getElementById(id);
+      if (el && el.parentNode) { outerBefore = el; _log("outer anchor:", "#" + id); break; }
+    }
+    if (!outerBefore) {
+      // Diagnostics: dump every element in outerDoc whose id mentions thread/pane/message.
+      const all = outerDoc.querySelectorAll("[id]");
+      const matching = [];
+      for (const el of all) {
+        if (/thread|pane|message|mail/i.test(el.id)) { matching.push(el.id); }
+      }
+      _log("no outer anchor matched; candidate ids in outer doc:", matching.join(", ") || "(none)");
+    }
+    if (outerBefore) {
+      out.push({ doc: outerDoc, beforeNode: outerBefore });
+    }
+  }
+
   for (const innerDoc of candidates) {
     // Try to find a sensible anchor inside the about3Pane.
     const before =
