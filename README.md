@@ -139,6 +139,13 @@ key does **not** exist. The experiment in `api/implementation.js` is
 the documented path — it grants access to Thunderbird's privileged JS
 context (`Services.wm`, chrome DOM, `nsIWindowWatcher`, etc.).
 
+Moves triggered from the palette are fire-and-forget: the background replies
+to the popup immediately and lets `messages.move()` finish on its own. That
+call only resolves after the server round-trip, and for IMAP/EWS/OWL that can
+take a few seconds (especially when the message body is still being
+downloaded on the same connection) — the add-on can't speed the round-trip
+up, but it no longer keeps the palette open while waiting.
+
 ### Debugging
 
 - Open the **Browser Console** (Tools → Developer Tools → Browser Console,
@@ -156,6 +163,7 @@ context (`Services.wm`, chrome DOM, `nsIWindowWatcher`, etc.).
 | **Bar position** | Fixed to the top of the window (`position: fixed; top: 0`). It sits above the tab strip when the DOM anchor isn't found. |
 | **Drag-and-drop** | The drop handler reads selected messages from the list — select messages *before* dragging to the bar. |
 | **Thunderbird version** | Requires 115+. Some internal APIs shift on 128+; test on your build. |
+| **Move latency** | The palette closes immediately, but the message only leaves the list once the backend (IMAP/EWS/OWL) has completed the move — that can take a few seconds, e.g. while a large message is still downloading. Compare with a drag-and-drop move in Thunderbird itself: if that is equally slow, it's the server/backend, not the add-on. |
 | **Exchange via OWL** | OWL accounts work for move/jump, but Thunderbird's undo (<kbd>Ctrl</kbd>+<kbd>Z</kbd>) does not reverse moves because OWL doesn't register them as undoable transactions. |
 | **Signature for ATN listing** | Experiments face stricter ATN review; for internal use, self-sign or disable `xpinstall.signatures.required`. |
 

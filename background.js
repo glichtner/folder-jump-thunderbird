@@ -241,15 +241,22 @@ browser.runtime.onMessage.addListener(async (msg) => {
     if (!folder) { console.warn("[FolderJump] folder not found for id", msg.folderId); return; }
     const mailFolder = { accountId: folder.accountId, path: folder.path };
 
+    // Don't await the move/jump: the popup waits for this reply before it
+    // closes, and messages.move() only resolves once the server round-trip
+    // (IMAP/EWS) has completed — which can take seconds, e.g. while the
+    // message body is still being downloaded. Kick it off, reply at once,
+    // and log failures.
     if (mode === "move" && messageIds?.length) {
       // TB 121+ wants the MailFolderId string here.
-      await browser.messages.move(messageIds, folder.id);
+      browser.messages.move(messageIds, folder.id)
+        .catch(err => console.error("[FolderJump] move failed:", err));
     } else if (mode === "jump") {
       // MV2 mailTabs.update still wants the {accountId, path} MailFolder object.
-      await browser.mailTabs.update(tabId, { displayedFolder: mailFolder });
+      browser.mailTabs.update(tabId, { displayedFolder: mailFolder })
+        .catch(err => console.error("[FolderJump] jump failed:", err));
     }
     await recordRecent(folder.id);
-    return;
+    return { ok: true };
   }
 
   // ── Popup toggled a pin ────────────────────────────────────────────
