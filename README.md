@@ -27,7 +27,7 @@ drag selected messages onto a folder button to move them there.
 | | |
 |---|---|
 | <kbd>Ctrl</kbd>+<kbd>.</kbd> | Open the palette and **jump** to a folder |
-| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>.</kbd> | Open the palette and **move** the open message |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>.</kbd> | Open the palette and **move** the selected message(s) — multi-select works, the palette shows how many |
 | **Fuzzy ranking** | Contiguous matches and word-boundary hits rank above scattered matches; `CLL` finds `…/CLL/` before `Cycle/Loaner/List` |
 | **Recent folders** | Empty search shows your most-recently-used folders first |
 | **★ pin** | Star a folder in the palette to pin it to the top bar |

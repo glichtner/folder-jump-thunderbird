@@ -16,6 +16,7 @@ let recentIds    = [];   // MRU order, newest first
 let filtered     = [];
 let selIdx       = 0;
 let mode         = "jump";
+let ctxToken     = null; // session token, echoed back on executeAction
 
 // ── Boot ───────────────────────────────────────────────────────────────
 (async () => {
@@ -30,13 +31,17 @@ let mode         = "jump";
   }
 
   mode        = ctx.mode;
+  ctxToken    = ctx.token;
   allFolders  = ctx.folders ?? [];
   pinnedIds   = new Set(ctx.pinnedIds ?? []);
   recentIds   = ctx.recentIds ?? [];
   filtered    = defaultOrder();
 
+  const count = ctx.messageCount ?? 0;
   document.getElementById("mode-label").textContent =
-    mode === "move" ? "Move to folder" : "Jump to folder";
+    mode === "move"
+      ? (count > 1 ? `Move ${count} messages to folder` : "Move message to folder")
+      : "Jump to folder";
 
   renderList();
 
@@ -304,7 +309,11 @@ function appendHighlighted(container, path, needle) {
 // ── Actions ────────────────────────────────────────────────────────────
 async function selectFolder(folder) {
   try {
-    await browser.runtime.sendMessage({ action: "executeAction", folderId: folder.id });
+    await browser.runtime.sendMessage({
+      action: "executeAction",
+      folderId: folder.id,
+      token: ctxToken
+    });
   } catch (_) {}
   window.close();
 }
