@@ -28,6 +28,15 @@
             }
           }
         ]
+      },
+      {
+        "name": "setUndoAvailable",
+        "type": "function",
+        "description": "Tell the Ctrl+Z hook whether the extension currently has a move to undo. While false the key is not intercepted, so Thunderbird's own undo runs.",
+        "async": true,
+        "parameters": [
+          { "name": "available", "type": "boolean" }
+        ]
       }
     ],
 
@@ -47,6 +56,12 @@
         "parameters": [
           { "name": "folderId", "type": "string" }
         ]
+      },
+      {
+        "name": "onUndoRequested",
+        "type": "function",
+        "description": "Fired when Ctrl+Z (Cmd+Z on macOS) is pressed in a mail tab of a main window while focus is not in an editable element and setUndoAvailable(true) is in effect.",
+        "parameters": []
       },
       {
         "name": "onFolderUnpinRequested",

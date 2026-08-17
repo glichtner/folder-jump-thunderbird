@@ -27,10 +27,6 @@
     "jump-to-folder": {
       "suggested_key": { "default": "Ctrl+Period" },
       "description": "Jump to a folder"
-    },
-    "undo-move": {
-      "suggested_key": { "default": "Ctrl+Z" },
-      "description": "Undo the last folder move"
     }
   },
 

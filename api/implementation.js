@@ -4,8 +4,9 @@
  * WebExtension Experiment — folderjump
  *
  * Runs in Thunderbird's privileged (parent) process.
- * Injects the pinned-folder bar into every open mail:3pane window
- * and fires extension events back to background.js.
+ * Injects the pinned-folder bar into every open mail:3pane window,
+ * hooks Ctrl+Z (undo last move) in those windows, and fires extension
+ * events back to background.js.
  *
  * Requires Thunderbird 115+.
  * ===================================================================== */
@@ -24,6 +25,7 @@ this.folderjump = class extends ExtensionAPI {
 
   onShutdown(isAppShutdown) {
     if (isAppShutdown) { return; }
+    _unhookAllUndoKeys();
     for (const win of Services.wm.getEnumerator("mail:3pane")) {
       _cleanup(win.document);
       // Also clean bars inside any loaded about3Pane docs.
@@ -41,9 +43,17 @@ this.folderjump = class extends ExtensionAPI {
     const clickListeners = new Set();
     const dropListeners  = new Set();
     const unpinListeners = new Set();
+    const undoListeners  = new Set();
 
     // Persist latest folder list so new windows can be populated.
     let _lastFolders = [];
+
+    // Whether background.js currently has a move to undo. While false the
+    // Ctrl+Z hook stays passive so Thunderbird's own undo runs.
+    const undoState = { available: false };
+    for (const win of Services.wm.getEnumerator("mail:3pane")) {
+      _hookUndoKey(win, undoState, undoListeners);
+    }
 
     // ── Window observer — inject bar into newly opened windows ────────
     const windowObserver = {
@@ -56,6 +66,7 @@ this.folderjump = class extends ExtensionAPI {
         win.addEventListener("load", () => {
           if (win.document.documentElement.getAttribute("windowtype") === "mail:3pane") {
             _injectBar(win.document, _lastFolders, clickListeners, dropListeners, unpinListeners);
+            _hookUndoKey(win, undoState, undoListeners);
           }
         }, { once: true });
       }
@@ -64,6 +75,7 @@ this.folderjump = class extends ExtensionAPI {
     context.callOnClose({
       close() {
         Services.ww.unregisterNotification(windowObserver);
+        _unhookAllUndoKeys();
       }
     });
 
@@ -75,10 +87,26 @@ this.folderjump = class extends ExtensionAPI {
           _lastFolders = folders;
           for (const win of Services.wm.getEnumerator("mail:3pane")) {
             _injectBar(win.document, folders, clickListeners, dropListeners, unpinListeners);
+            _hookUndoKey(win, undoState, undoListeners); // no-op if already hooked
           }
         },
 
+        // ── setUndoAvailable(available) ──────────────────────────────
+        async setUndoAvailable(available) {
+          undoState.available = !!available;
+        },
+
         // ── Events ───────────────────────────────────────────────────
+        onUndoRequested: new ExtensionCommon.EventManager({
+          context,
+          name: "folderjump.onUndoRequested",
+          register(fire) {
+            const fn = () => fire.async();
+            undoListeners.add(fn);
+            return () => undoListeners.delete(fn);
+          }
+        }).api(),
+
         onFolderClicked: new ExtensionCommon.EventManager({
           context,
           name: "folderjump.onFolderClicked",
@@ -112,6 +140,88 @@ this.folderjump = class extends ExtensionAPI {
     };
   }
 };
+
+// ── Undo shortcut (Ctrl+Z / Cmd+Z) ─────────────────────────────────────
+// Registered here instead of as a `commands` shortcut on purpose: command
+// shortcuts are global to every Thunderbird window, so a Ctrl+Z command
+// swallows the key in the composer, the quick-filter box, search fields…
+// This capturing keydown listener lives only on mail:3pane windows and
+// steps aside whenever the active tab is not a mail tab, focus is inside an
+// editable element, or background.js has nothing to undo.
+
+const _undoKeyHooks = new Map(); // ChromeWindow -> keydown handler
+
+function _hookUndoKey(win, undoState, undoListeners) {
+  if (!win || _undoKeyHooks.has(win)) { return; }
+  const isMac = Services.appinfo.OS === "Darwin";
+
+  const handler = (e) => {
+    if (e.defaultPrevented || !undoState.available) { return; }
+
+    const accel = isMac ? (e.metaKey && !e.ctrlKey) : (e.ctrlKey && !e.metaKey);
+    if (!accel || e.shiftKey || e.altKey) { return; }
+    const key = (e.key || "").toLowerCase();
+    // Non-Latin layouts (e.g. Cyrillic) report the layout character in
+    // e.key; fall back to the physical key then. Do NOT do that for Latin
+    // layouts — on AZERTY the physical KeyZ position is "w".
+    const isZ = key === "z" || (e.code === "KeyZ" && !/^[a-z]$/.test(key));
+    if (!isZ) { return; }
+
+    // Only act in mail tabs (thread pane / message tab). Content tabs,
+    // calendar, chat, add-on option pages… keep their own Ctrl+Z.
+    const tab = win.document.getElementById("tabmail")?.currentTabInfo;
+    const modeName = tab?.mode?.name;
+    if (modeName && !/^mail(3Pane|Message)Tab$/.test(modeName)) { return; }
+
+    // Check both the focus manager's notion of the focused element and the
+    // event's innermost target (composedPath sees into open shadow roots).
+    const innermost = (e.composedPath?.() || [])[0] || e.target;
+    if (_isEditable(Services.focus.focusedElement) || _isEditable(innermost)) { return; }
+
+    e.preventDefault();
+    e.stopPropagation();
+    for (const fn of undoListeners) { fn(); }
+  };
+
+  win.addEventListener("keydown", handler, true);
+  _undoKeyHooks.set(win, handler);
+  win.addEventListener("unload", () => _unhookUndoKey(win), { once: true });
+}
+
+function _unhookUndoKey(win) {
+  const handler = _undoKeyHooks.get(win);
+  if (!handler) { return; }
+  try { win.removeEventListener("keydown", handler, true); } catch (_) {}
+  _undoKeyHooks.delete(win);
+}
+
+function _unhookAllUndoKeys() {
+  for (const win of [..._undoKeyHooks.keys()]) { _unhookUndoKey(win); }
+}
+
+// True if `node` (the focused element) is, or sits inside, something the
+// user can type into: <input>, <textarea>, contenteditable, designMode
+// documents (rich-text editors). Descends into shadow roots first.
+function _isEditable(node) {
+  let el = node;
+  while (el?.shadowRoot?.activeElement) { el = el.shadowRoot.activeElement; }
+  while (el) {
+    if (el.nodeType === 1) {                       // element
+      const tag = (el.localName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea") { return true; }
+      if (el.isContentEditable) { return true; }
+      const ce = el.getAttribute?.("contenteditable");
+      if (ce === "" || ce === "true") { return true; }
+    } else if (el.nodeType === 9) {                // document
+      if (el.designMode === "on") { return true; }
+    } else if (el.nodeType === 11 && el.host) {    // shadow root → host
+      el = el.host;
+      continue;
+    }
+    el = el.parentNode;
+  }
+  return false;
+}
 
 // ── DOM helpers ─────────────────────────────────────────────────────────
 

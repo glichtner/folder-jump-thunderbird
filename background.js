@@ -25,10 +25,6 @@ let ctxToken = 0;
 // ── Keyboard commands ──────────────────────────────────────────────────
 browser.commands.onCommand.addListener(async (command) => {
   console.log("[FolderJump] command fired:", command);
-  if (command === "undo-move") {
-    await undoLastMove();
-    return;
-  }
   if (command !== "move-to-folder" && command !== "jump-to-folder") { return; }
   const mode = command === "move-to-folder" ? "move" : "jump";
   try {
@@ -42,13 +38,37 @@ browser.commands.onCommand.addListener(async (command) => {
 // Listen to every move (whether triggered by us or by Thunderbird's UI)
 // and keep a stack of recent ones. Undo pops the top and moves the
 // affected messages back to their previous folder.
+//
+// The Ctrl+Z key itself is intercepted by the experiment
+// (api/implementation.js) rather than via the `commands` API: a command
+// shortcut is global and would also swallow Ctrl+Z in the composer and in
+// text fields. The experiment only fires onUndoRequested when a mail tab of
+// the main window has focus outside an editable element — and only while we
+// have something to undo (see syncUndoAvailable), so Thunderbird's own undo
+// keeps working the rest of the time.
 const MAX_HISTORY = 25;
 const moveHistory = [];
+
+// Message ids we handed to messages.move() as part of an undo. The onMoved
+// event that results from it must not be recorded as a new history entry,
+// otherwise a second Ctrl+Z would just redo the move instead of undoing the
+// one before it.
+const undoMovedIds = new Set();
+const UNDO_ID_TTL_MS = 60000;
+
+function syncUndoAvailable() {
+  browser.folderjump.setUndoAvailable(moveHistory.length > 0)
+    .catch(err => console.warn("[FolderJump] setUndoAvailable failed:", err));
+}
 
 browser.messages.onMoved.addListener((originals, moveds) => {
   const orig = originals?.messages ?? [];
   const moved = moveds?.messages ?? [];
   if (!orig.length || !moved.length) { return; }
+  if (orig.every(m => undoMovedIds.has(m.id))) {
+    for (const m of orig) { undoMovedIds.delete(m.id); }
+    return;
+  }
   const fromFolder = orig[0].folder;
   if (!fromFolder) { return; }
   moveHistory.push({
@@ -60,19 +80,27 @@ browser.messages.onMoved.addListener((originals, moveds) => {
     newIds: moved.map(m => m.id)
   });
   while (moveHistory.length > MAX_HISTORY) { moveHistory.shift(); }
+  syncUndoAvailable();
 });
 
 async function undoLastMove() {
   const last = moveHistory.pop();
+  syncUndoAvailable();
   if (!last) { console.log("[FolderJump] undo: history empty"); return; }
   const dest = last.fromFolder.id
     ?? { accountId: last.fromFolder.accountId, path: last.fromFolder.path };
+  for (const id of last.newIds) { undoMovedIds.add(id); }
+  // Drop the marker eventually in case onMoved never fires for these ids.
+  setTimeout(() => { for (const id of last.newIds) { undoMovedIds.delete(id); } }, UNDO_ID_TTL_MS);
   try {
     await browser.messages.move(last.newIds, dest);
   } catch (err) {
     console.error("[FolderJump] undo failed:", err);
+    for (const id of last.newIds) { undoMovedIds.delete(id); }
   }
 }
+
+browser.folderjump.onUndoRequested.addListener(undoLastMove);
 
 async function openPalette(mode) {
   console.log("[FolderJump] openPalette start, mode =", mode);

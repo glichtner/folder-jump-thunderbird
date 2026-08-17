@@ -28,6 +28,7 @@ drag selected messages onto a folder button to move them there.
 |---|---|
 | <kbd>Ctrl</kbd>+<kbd>.</kbd> | Open the palette and **jump** to a folder |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>.</kbd> | Open the palette and **move** the selected message(s) — multi-select works, the palette shows how many |
+| <kbd>Ctrl</kbd>+<kbd>Z</kbd> | **Undo** the last move (any move — palette, pinned bar or Thunderbird's own UI). Only active in the main mail window while the message list / folder pane has focus, so it never steals <kbd>Ctrl</kbd>+<kbd>Z</kbd> from the composer or text fields |
 | **Fuzzy ranking** | Contiguous matches and word-boundary hits rank above scattered matches; `CLL` finds `…/CLL/` before `Cycle/Loaner/List` |
 | **Recent folders** | Empty search shows your most-recently-used folders first |
 | **★ pin** | Star a folder in the palette to pin it to the top bar |
@@ -36,6 +37,9 @@ drag selected messages onto a folder button to move them there.
 
 Shortcuts default to `Ctrl+.` / `Ctrl+Shift+.` to avoid collisions with
 Thunderbird built-ins and AltGr combinations on non-US keyboards.
+Undo is fixed to <kbd>Ctrl</kbd>+<kbd>Z</kbd> (<kbd>⌘</kbd>+<kbd>Z</kbd> on
+macOS) and is not a global `commands` shortcut on purpose — see
+[Why an experiment for the bar?](#why-an-experiment-for-the-bar).
 
 ---
 
@@ -70,6 +74,9 @@ Two places, both work:
 - **Options page:** Add-ons Manager → Folder Jump → *Preferences*
   (click a field, press the key combo).
 - **Manage Extension Shortcuts:** Add-ons Manager → cog ⚙ → same name.
+
+Only the two palette shortcuts are rebindable. Undo (<kbd>Ctrl</kbd>+<kbd>Z</kbd>)
+is handled by the experiment so it can be scoped to the mail window.
 
 ---
 
@@ -115,7 +122,7 @@ folder-jump/
 ├── options.html/css/js    Shortcut-rebinding preferences page
 ├── api/
 │   ├── schema.json        Experiment API schema
-│   └── implementation.js  Privileged code: injects pinned bar, fires events
+│   └── implementation.js  Privileged code: injects pinned bar, hooks Ctrl+Z, fires events
 └── icons/
     └── icon.svg           Extension icon (dark folder + arrow)
 ```
@@ -138,6 +145,16 @@ Thunderbird's 3-pane window. The `messenger_window_scripts` manifest
 key does **not** exist. The experiment in `api/implementation.js` is
 the documented path — it grants access to Thunderbird's privileged JS
 context (`Services.wm`, chrome DOM, `nsIWindowWatcher`, etc.).
+
+The same experiment also hosts the <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo hook.
+A `commands` shortcut would be the "proper" API, but command shortcuts are
+global to every Thunderbird window: bound to <kbd>Ctrl</kbd>+<kbd>Z</kbd> it
+swallows undo in the composer, the quick-filter box and every other text
+field. The experiment instead adds a capturing `keydown` listener to
+`mail:3pane` windows only and steps aside when the active tab is not a mail
+tab, when focus is in an editable element, or when there is nothing to undo
+(`folderjump.setUndoAvailable(false)`) — in which case Thunderbird's own
+undo runs as usual.
 
 Moves triggered from the palette are fire-and-forget: the background replies
 to the popup immediately and lets `messages.move()` finish on its own. That
@@ -164,7 +181,8 @@ up, but it no longer keeps the palette open while waiting.
 | **Drag-and-drop** | The drop handler reads selected messages from the list — select messages *before* dragging to the bar. |
 | **Thunderbird version** | Requires 115+. Some internal APIs shift on 128+; test on your build. |
 | **Move latency** | The palette closes immediately, but the message only leaves the list once the backend (IMAP/EWS/OWL) has completed the move — that can take a few seconds, e.g. while a large message is still downloading. Compare with a drag-and-drop move in Thunderbird itself: if that is equally slow, it's the server/backend, not the add-on. |
-| **Exchange via OWL** | OWL accounts work for move/jump, but Thunderbird's undo (<kbd>Ctrl</kbd>+<kbd>Z</kbd>) does not reverse moves because OWL doesn't register them as undoable transactions. |
+| **Undo scope** | <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo only listens in the main mail window (mail tabs, non-editable focus). Moves done from a standalone message window can still be undone from the main window afterwards. History is per session (last 25 moves). |
+| **Exchange via OWL** | OWL accounts work for move/jump. Thunderbird's built-in undo doesn't reverse OWL moves (OWL doesn't register undoable transactions), but the add-on's own <kbd>Ctrl</kbd>+<kbd>Z</kbd> does. |
 | **Signature for ATN listing** | Experiments face stricter ATN review; for internal use, self-sign or disable `xpinstall.signatures.required`. |
 
 ---
