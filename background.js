@@ -41,55 +41,6 @@ function folderDestination(folder) {
   return folder.id;
 }
 
-// ── Native Exchange accounts ───────────────────────────────────────────
-// Thunderbird's Exchange backend addresses folders and messages on the
-// server by an ID it stores locally. When one is missing, or the server
-// rejects the request, messages.move() fails with the same opaque text —
-// "Aborted with status: 2147549183" (NS_ERROR_UNEXPECTED) — and so does
-// Thunderbird's own Move To, silently. The experiment can read the stored
-// IDs, so check them first and say which folder or message is at fault.
-const UNLINKED_FOLDER_REASON = "Thunderbird has no Exchange ID stored for this folder, so it cannot move mail into it (its own Move To fails here too).";
-
-// An error whose message already tells the user what to do; startAction adds
-// no generic hint to it.
-function explained(message) {
-  return Object.assign(new Error(message), { explained: true });
-}
-
-async function inspectMove(ids, folder) {
-  if (!browser.folderjump.inspectMove || !folder.accountId || folder.path == null) { return null; }
-  try {
-    return await browser.folderjump.inspectMove(ids, { accountId: folder.accountId, path: folder.path });
-  } catch (err) {
-    // Diagnostics only: never let them block a move Thunderbird could do.
-    console.warn("[FolderJump] move inspection failed:", err);
-    return null;
-  }
-}
-
-// messages.move() reports a backend failure only as the decimal nsresult.
-const NS_ERROR_UNEXPECTED = 0x8000ffff;
-const NS_ERROR_NAMES = {
-  [NS_ERROR_UNEXPECTED]: "NS_ERROR_UNEXPECTED",
-  0x80004005: "NS_ERROR_FAILURE",
-  0x80004004: "NS_ERROR_ABORT",
-  0x80040111: "NS_ERROR_NOT_AVAILABLE",
-  0x804b000e: "NS_ERROR_NET_TIMEOUT",
-  0x804b0010: "NS_ERROR_OFFLINE"
-};
-
-function describeMoveFailure(err, inspection) {
-  const status = Number(/Aborted with status: (\d+)/.exec(err?.message ?? String(err))?.[1]);
-  if (!status) { return err; }
-  const hex = `0x${status.toString(16).toUpperCase().padStart(8, "0")}`;
-  const code = NS_ERROR_NAMES[status] ? `${NS_ERROR_NAMES[status]}, ${hex}` : hex;
-  if (inspection?.exchange && status === NS_ERROR_UNEXPECTED) {
-    // The stored IDs were present, which leaves the server round-trip.
-    return explained(`Thunderbird's Exchange backend aborted the move (${code}). The folder and the selected mail are linked to the server, so the server rejected the request or Thunderbird could not record the result. The mail may already have moved on the server: use Get Messages on both folders before trying again.`);
-  }
-  return new Error(`Thunderbird aborted the move (${code})`);
-}
-
 async function moveMessages(ids, folder, isUserAction = true) {
   if (folder.moveUnavailableReason) { throw new Error(folder.moveUnavailableReason); }
   const destination = folderDestination(folder);
@@ -101,22 +52,47 @@ async function moveMessages(ids, folder, isUserAction = true) {
       throw new Error("Thunderbird reports that this folder cannot receive messages. It may be read-only or only contain subfolders.");
     }
   }
-  const inspection = await inspectMove(ids, folder);
-  if (inspection?.destinationUnlinked) { throw explained(UNLINKED_FOLDER_REASON); }
-  if (inspection?.unlinkedMessages) {
-    // Thunderbird would leave these out of the server request, move the
-    // rest, and then fail to record the result — so move nothing.
-    const some = inspection.unlinkedMessages < ids.length ? `${inspection.unlinkedMessages} of the ${ids.length}` : "The";
-    throw explained(`${some} selected message(s) have no Exchange ID in Thunderbird, so the server cannot be told to move them. Nothing was moved. Get Messages on the source folder may link them again.`);
-  }
   const options = await moveOptions;
   try {
     return await (options && isUserAction
       ? browser.messages.move(ids, destination, options)
       : browser.messages.move(ids, destination));
   } catch (err) {
-    throw describeMoveFailure(err, inspection);
+    throw describeMoveFailure(err);
   }
+}
+
+// messages.move() reports a backend failure only as "Aborted with status:
+// <nsresult in decimal>". Name the common ones.
+const NS_ERROR_UNEXPECTED = 0x8000ffff;
+const NS_ERROR_NAMES = {
+  [NS_ERROR_UNEXPECTED]: "NS_ERROR_UNEXPECTED",
+  0x80004005: "NS_ERROR_FAILURE",
+  0x80004004: "NS_ERROR_ABORT",
+  0x80040111: "NS_ERROR_NOT_AVAILABLE",
+  0x804b000e: "NS_ERROR_NET_TIMEOUT",
+  0x804b0010: "NS_ERROR_OFFLINE"
+};
+
+// An error whose message already says what to do; startAction adds no
+// generic hint to it.
+function explained(message) {
+  return Object.assign(new Error(message), { explained: true });
+}
+
+function describeMoveFailure(err) {
+  const status = Number(/Aborted with status: (\d+)/.exec(err?.message ?? String(err))?.[1]);
+  if (!status) { return err; }
+  const hex = `0x${status.toString(16).toUpperCase().padStart(8, "0")}`;
+  const code = NS_ERROR_NAMES[status] ? `${NS_ERROR_NAMES[status]}, ${hex}` : hex;
+  if (status === NS_ERROR_UNEXPECTED) {
+    // Thunderbird's native Exchange backend reports nearly every failure this
+    // way — including one seen on Thunderbird 160 where the server had moved
+    // the mail while the source folder kept listing it. A retry can then
+    // never work, and only Repair Folder brings the folder back in line.
+    return explained(`Thunderbird aborted the move (${code}). On an Exchange account the mail may already have moved on the server: check there (Outlook or OWA) before trying again. If it has, do not retry; use Repair Folder in the source folder's Properties to reload it from the server.`);
+  }
+  return new Error(`Thunderbird aborted the move (${code})`);
 }
 
 // Accepted actions outlive their popup. Keep feedback in the main window
@@ -444,15 +420,6 @@ async function getFlatFolders(accountId, mode = "jump") {
     const unavailable = await browser.folders.query({ accountId, canAddMessages: false });
     for (const folder of unavailable) { unavailableIds.add(folder.id); }
   }
-  // Native Exchange only: folders Thunderbird cannot address on the server.
-  const unlinkedPaths = new Set();
-  if (mode === "move" && browser.folderjump.getUnlinkedFolders) {
-    try {
-      for (const path of await browser.folderjump.getUnlinkedFolders(accountId)) { unlinkedPaths.add(path); }
-    } catch (err) {
-      console.warn("[FolderJump] Exchange folder check failed:", err);
-    }
-  }
   const result = [];
 
   function walk(folders, prefix) {
@@ -466,8 +433,6 @@ async function getFlatFolders(accountId, mode = "jump") {
           moveUnavailableReason = "This is a virtual folder. Choose a real mail folder as the destination.";
         } else if (unavailableIds.has(f.id)) {
           moveUnavailableReason = "This folder cannot receive messages. It may be read-only or only contain subfolders.";
-        } else if (unlinkedPaths.has(f.path)) {
-          moveUnavailableReason = UNLINKED_FOLDER_REASON;
         }
       }
       result.push({
