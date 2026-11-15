@@ -103,6 +103,28 @@ this.folderjump = class extends ExtensionAPI {
           _updateActionStatusInWindows();
         },
 
+        // ── inspectMove(messageIds, destination) ─────────────────────
+        // Never throws: a failed inspection must not block a move that
+        // Thunderbird itself might still be able to perform.
+        async inspectMove(messageIds, destination) {
+          try {
+            return _inspectMove(context.extension, messageIds, destination);
+          } catch (err) {
+            _log("inspectMove failed:", err);
+            return null;
+          }
+        },
+
+        // ── getUnlinkedFolders(accountId) ────────────────────────────
+        async getUnlinkedFolders(accountId) {
+          try {
+            return _unlinkedFolderPaths(context.extension, accountId);
+          } catch (err) {
+            _log("getUnlinkedFolders failed:", err);
+            return [];
+          }
+        },
+
         // ── Events ───────────────────────────────────────────────────
         onUndoRequested: new ExtensionCommon.EventManager({
           context,
@@ -228,6 +250,80 @@ function _isEditable(node) {
     el = el.parentNode;
   }
   return false;
+}
+
+// ── Exchange links ──────────────────────────────────────────────────────
+// Thunderbird's native Exchange backend (EWS/Graph) addresses folders and
+// messages on the server by an ID it keeps locally in the "ewsId" string
+// property. A move into a folder without one, or of a message without one,
+// cannot succeed: ExchangeFolder::CopyMessages ends in NS_ERROR_UNEXPECTED,
+// which messages.move() reports as "Aborted with status: 2147549183" — the
+// very status it also uses when the server rejects the request. The
+// WebExtension API cannot see the property, so background.js asks here to
+// tell these cases apart and to name the folder or message at fault.
+
+const EXCHANGE_ID_PROPERTY = "ewsId";
+const EXCHANGE_SERVER_TYPES = new Set(["ews", "graph"]);
+const VIRTUAL_FOLDER_FLAG = 0x20; // nsMsgFolderFlags.Virtual
+
+// Works for nsIMsgFolder and nsIMsgDBHdr alike. A folder whose summary file
+// is gone throws instead of returning "", which is just as unusable.
+function _exchangeId(item) {
+  try {
+    return item.getStringProperty(EXCHANGE_ID_PROPERTY) || "";
+  } catch (_) {
+    return "";
+  }
+}
+
+// Only trust a missing ID if this account demonstrably stores IDs under the
+// property read here. Should a Thunderbird release rename it, every folder
+// would otherwise look unlinked and all moves would be blocked. The probe is
+// bounded: an ID lookup that misses the folder cache opens the folder's
+// database.
+function _recordsExchangeIds(server) {
+  const root = server.rootFolder;
+  if (_exchangeId(root)) { return true; }
+  return root.descendants.slice(0, 5).some(f => _exchangeId(f));
+}
+
+function _exchangeServer(folder) {
+  const server = folder?.server;
+  return server && EXCHANGE_SERVER_TYPES.has(server.type) && _recordsExchangeIds(server)
+    ? server
+    : null;
+}
+
+function _inspectMove(extension, messageIds, destination) {
+  const result = { exchange: false, destinationUnlinked: false, unlinkedMessages: 0 };
+  const folder = extension.folderManager.get(destination.accountId, destination.path);
+  const server = _exchangeServer(folder);
+  if (!server) { return result; }
+
+  result.exchange = true;
+  result.destinationUnlinked = !_exchangeId(folder);
+  for (const id of messageIds) {
+    const hdr = extension.messageManager.get(id);
+    // Only a same-server move sends the messages' own IDs to the server; mail
+    // from another account is uploaded as new items instead.
+    if (hdr?.folder?.server?.key === server.key && !_exchangeId(hdr)) {
+      result.unlinkedMessages++;
+    }
+  }
+  return result;
+}
+
+// WebExtension paths of the account's real folders that have no Exchange ID.
+function _unlinkedFolderPaths(extension, accountId) {
+  const root = extension.folderManager.get(accountId, "/");
+  if (!_exchangeServer(root)) { return []; }
+  const paths = [];
+  for (const folder of root.descendants) {
+    if ((folder.flags & VIRTUAL_FOLDER_FLAG) || _exchangeId(folder)) { continue; }
+    const path = extension.folderManager.convert(folder, accountId)?.path;
+    if (path) { paths.push(path); }
+  }
+  return paths;
 }
 
 // ── DOM helpers ─────────────────────────────────────────────────────────

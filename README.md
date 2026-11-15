@@ -122,7 +122,9 @@ folder-jump/
 ├── options.html/css/js    Shortcut-rebinding preferences page
 ├── api/
 │   ├── schema.json        Experiment API schema
-│   └── implementation.js  Privileged code: injects pinned bar, hooks Ctrl+Z, fires events
+│   └── implementation.js  Privileged code: injects pinned bar, hooks Ctrl+Z, reads Exchange IDs, fires events
+├── tests/
+│   └── actions.test.cjs   Regression tests (node:test) with mocked Thunderbird APIs
 └── icons/
     └── icon.svg           Extension icon (dark folder + arrow)
 ```
@@ -176,17 +178,32 @@ example because its quota or permissions changed). Thunderbird 115 lacks
 the capability API and relies on the move result for those restrictions.
 See the [folder capability API](https://webextension-api.thunderbird.net/en/beta-mv2/folders.html#getfoldercapabilities-folder).
 
-For native EWS, this is a preliminary check, not verification of Exchange
-server permissions. The current native Exchange folder implementation
-inherits the basic folder-type capability checks; the server can still
-reject an otherwise eligible target. A successful capability check also
-does not prove that Thunderbird has a valid Exchange ID for that folder.
+For native Exchange accounts (EWS/Graph), the capability check says nothing
+about Exchange server permissions: the folder implementation inherits the
+basic folder-type checks, and the server can still reject an eligible target.
 See Thunderbird's [Exchange folder implementation](https://github.com/mozilla/releases-comm-central/blob/master/mailnews/protocols/exchange/src/ExchangeFolder.cpp)
 and [base folder capability checks](https://github.com/mozilla/releases-comm-central/blob/master/mailnews/base/src/nsMsgDBFolder.cpp).
-When diagnosing EWS failures, compare the same message and destination with
-Thunderbird's own Move To command and retain the displayed error. Also note
-whether the account uses native EWS or an extension such as Owl/ExQuilla;
-their backend behavior can differ.
+
+That backend addresses folders and messages on the server by an ID it stores
+locally in the `ewsId` string property, and it reports nearly every failure
+as `NS_ERROR_UNEXPECTED` — `messages.move()` then rejects with
+`Aborted with status: 2147549183`. As of Thunderbird 160 that one status
+covers four different situations:
+
+| Situation | What Thunderbird does | What the add-on does |
+|---|---|---|
+| The destination folder has no stored Exchange ID | Fails before contacting the server | Marks the folder as unavailable in the palette and refuses the move with that reason |
+| A selected message has no stored Exchange ID | Leaves it out of the request, moves the rest on the server, then fails to record the result | Refuses the whole move, so nothing is moved partially |
+| The Exchange server rejects the request (e.g. an ID that is no longer valid) | Fails after the round-trip | Names the status and says the server round-trip failed |
+| The server moved the mail but the local copy could not be recorded | Fails after the round-trip | Same message; it asks for Get Messages because the mail may already have moved |
+
+The WebExtension API cannot see `ewsId`, so the experiment reads it
+(`folderjump.inspectMove`, `folderjump.getUnlinkedFolders`). The checks are
+skipped when an account does not demonstrably store IDs under that property,
+so a renamed property in a later Thunderbird cannot block every move. An
+inspection that fails never blocks a move either. Thunderbird's own Move To
+runs the same backend code and fails in the same cases, only without a
+message. Owl/ExQuilla accounts use their own backends and are not inspected.
 
 On Thunderbird 137+, moves use `isUserAction: true`, which supplies the mail
 window to the backend for user interaction and enables native undo. Older
@@ -201,6 +218,14 @@ See the [move API](https://webextension-api.thunderbird.net/en/mv2/messages.html
   prefixed `[FolderJump]`.
 - Reload quickly via `about:debugging` → this extension → **Reload**.
 - Action logs include elapsed milliseconds and Thunderbird's error text.
+- When a native Exchange move fails after the server round-trip, the server's
+  actual answer (for example `ErrorItemNotFound`) only appears in
+  Thunderbird's Rust log, written by `protocol_shared::safe_xpcom` as
+  `an error occurred when performing operation MoveItem: …`. To capture it,
+  start Thunderbird with the environment variables
+  `MOZ_LOG=protocol_shared::*:5,ews_xpcom::*:5` and `MOZ_LOG_FILE=<path>`,
+  repeat the move, and read the log file. (Derived from the Thunderbird 160
+  sources; module names can change between releases.)
 - Run regression tests with `node --test tests/*.test.cjs` (Node 20+).
   The tests simulate delayed and failed Thunderbird API calls; verify a move
   and undo with your actual mail backend after installing an update.

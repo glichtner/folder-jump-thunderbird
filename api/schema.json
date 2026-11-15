@@ -15,6 +15,32 @@
         ]
       },
       {
+        "name": "inspectMove",
+        "type": "function",
+        "description": "Check whether Thunderbird's native Exchange backend can address the destination folder and the given messages on the server. Resolves to null if the inspection itself failed.",
+        "async": true,
+        "parameters": [
+          { "name": "messageIds", "type": "array", "items": { "type": "integer" } },
+          {
+            "name": "destination",
+            "type": "object",
+            "properties": {
+              "accountId": { "type": "string" },
+              "path":      { "type": "string" }
+            }
+          }
+        ]
+      },
+      {
+        "name": "getUnlinkedFolders",
+        "type": "function",
+        "description": "Paths of the folders in a native Exchange account for which Thunderbird has no Exchange ID stored. Empty for other account types.",
+        "async": true,
+        "parameters": [
+          { "name": "accountId", "type": "string" }
+        ]
+      },
+      {
         "name": "updateBar",
         "type": "function",
         "description": "Create or refresh the pinned-folder bar in all open 3-pane windows.",
