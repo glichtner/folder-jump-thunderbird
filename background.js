@@ -4,8 +4,8 @@
  * background.js — Folder Jump
  *
  * Coordinates keyboard commands, the palette popup, and the pinned bar.
- * All folder references use MailFolderId strings (the `id` property on
- * MailFolder objects returned by browser.accounts.list(true)).
+ * UI keys use folder IDs. API calls get the MailFolderId on TB 121+ and
+ * an accountId/path pair on TB 115 (see folderDestination).
  * ===================================================================== */
 
 // ── State ──────────────────────────────────────────────────────────────
@@ -15,6 +15,122 @@
 let pendingCtx = null;
 let paletteWindowId = null;
 let ctxToken = 0;
+let openingPalette = null;
+
+// TB 137 added user-action moves, including the mail window needed by
+// backends for progress/authentication and native undo. Never retry a failed
+// move with different arguments: the server may already have moved some mail.
+const moveOptions = browser.runtime.getBrowserInfo().then(info =>
+  parseInt(info.version, 10) >= 137 ? { isUserAction: true } : null
+).catch(err => {
+  console.warn("[FolderJump] Could not determine Thunderbird version:", err);
+  return null;
+});
+
+// TB 121+ returns MailFolderId strings and warns about (MV3: rejects) full
+// MailFolder objects. TB 115 has no folder IDs, so the palette synthesises
+// `${accountId}:${path}` keys; those must never reach the API. A key like
+// that can also survive in storage (pinned on 115, then upgraded).
+const nativeFolderIds = typeof browser.folders?.getFolderCapabilities === "function";
+
+function folderDestination(folder) {
+  const hasMailFolder = folder.accountId && folder.path != null;
+  const synthetic = hasMailFolder ? `${folder.accountId}:${folder.path}` : null;
+  if (nativeFolderIds && folder.id && folder.id !== synthetic) { return folder.id; }
+  if (hasMailFolder) { return { accountId: folder.accountId, path: folder.path }; }
+  return folder.id;
+}
+
+async function moveMessages(ids, folder, isUserAction = true) {
+  if (folder.moveUnavailableReason) { throw new Error(folder.moveUnavailableReason); }
+  const destination = folderDestination(folder);
+  // Recheck at execution time: ACLs can change while the palette is open,
+  // and pinned folders may have been saved long before this move.
+  if (browser.folders?.getFolderCapabilities) {
+    const capabilities = await browser.folders.getFolderCapabilities(destination);
+    if (capabilities.canAddMessages === false) {
+      throw new Error("Thunderbird reports that this folder cannot receive messages. It may be read-only or only contain subfolders.");
+    }
+  }
+  const options = await moveOptions;
+  return options && isUserAction
+    ? browser.messages.move(ids, destination, options)
+    : browser.messages.move(ids, destination);
+}
+
+// Accepted actions outlive their popup. Keep feedback in the main window
+// until completion, and lock the captured IDs against overlapping moves.
+const movingIds = new Set();
+const activeActions = new Map();
+let actionSequence = 0;
+let actionErrors = [];
+
+function publishStatus(state, text) {
+  browser.folderjump.setActionStatus(state, text)
+    .catch(err => console.error("[FolderJump] status display failed:", err));
+}
+
+// Only pending work and failures are shown. Success needs no message: the
+// mail itself leaves the list, or the folder opens.
+function refreshActionStatus() {
+  const count = activeActions.size;
+  const runningText = count > 1
+    ? `${count} actions in progress…`
+    : (activeActions.values().next().value ?? "");
+  if (actionErrors.length) {
+    publishStatus("error", `${actionErrors.join(" | ")}${count ? ` — ${runningText}` : ""}`);
+  } else if (count) {
+    publishStatus("running", runningText);
+  } else {
+    publishStatus("", "");
+  }
+}
+
+function showActionError(text) {
+  actionErrors.push(text);
+  refreshActionStatus();
+}
+
+function startAction({ label, ids = [], folderId, run }) {
+  if (ids.some(id => movingIds.has(id))) {
+    throw new Error("These messages are already being moved. Wait for the current move to finish.");
+  }
+  if (!activeActions.size) { actionErrors = []; }
+  const actionId = ++actionSequence;
+  const started = Date.now();
+  for (const id of ids) { movingIds.add(id); }
+  activeActions.set(actionId, label);
+  refreshActionStatus();
+  console.log(`[FolderJump] action ${actionId} started:`, label);
+
+  // The receipt means accepted, not completed. Storage and server latency
+  // must not delay the popup's acknowledgement.
+  void (async () => {
+    try {
+      await run();
+      console.log(`[FolderJump] action ${actionId} completed in ${Date.now() - started} ms`);
+      if (folderId) {
+        recordRecent(folderId).catch(err => console.warn("[FolderJump] recent folders:", err));
+      }
+    } catch (err) {
+      console.error(`[FolderJump] action ${actionId} failed after ${Date.now() - started} ms:`, err);
+      actionErrors.push(`${label.replace(/…$/, "")} failed: ${err.message ?? String(err)}. Check the source and destination before trying again.`);
+    } finally {
+      for (const id of ids) { movingIds.delete(id); }
+      activeActions.delete(actionId);
+      refreshActionStatus();
+    }
+  })();
+}
+
+function startMove(ids, folder) {
+  const name = folder.displayPath ?? folder.path ?? folder.id;
+  startAction({
+    label: `Moving ${ids.length} message(s) to ${name}…`,
+    ids, folderId: folder.id,
+    run: () => moveMessages(ids, folder)
+  });
+}
 
 // ── Init ───────────────────────────────────────────────────────────────
 (async () => {
@@ -31,6 +147,7 @@ browser.commands.onCommand.addListener(async (command) => {
     await openPalette(mode);
   } catch (err) {
     console.error("[FolderJump] openPalette failed:", err);
+    showActionError(`Could not open Folder Jump: ${err.message ?? String(err)}`);
   }
 });
 
@@ -87,15 +204,15 @@ async function undoLastMove() {
   const last = moveHistory.pop();
   syncUndoAvailable();
   if (!last) { console.log("[FolderJump] undo: history empty"); return; }
-  const dest = last.fromFolder.id
-    ?? { accountId: last.fromFolder.accountId, path: last.fromFolder.path };
   for (const id of last.newIds) { undoMovedIds.add(id); }
   // Drop the marker eventually in case onMoved never fires for these ids.
   setTimeout(() => { for (const id of last.newIds) { undoMovedIds.delete(id); } }, UNDO_ID_TTL_MS);
   try {
-    await browser.messages.move(last.newIds, dest);
+    // Reversing our own history must not create another native undo action.
+    await moveMessages(last.newIds, last.fromFolder, false);
   } catch (err) {
     console.error("[FolderJump] undo failed:", err);
+    showActionError(`Undo failed: ${err.message ?? String(err)}`);
     for (const id of last.newIds) { undoMovedIds.delete(id); }
   }
 }
@@ -103,6 +220,31 @@ async function undoLastMove() {
 browser.folderjump.onUndoRequested.addListener(undoLastMove);
 
 async function openPalette(mode) {
+  if (openingPalette) { return openingPalette; }
+  openingPalette = openPaletteWindow(mode);
+  try {
+    await openingPalette;
+  } finally {
+    openingPalette = null;
+  }
+}
+
+async function openPaletteWindow(mode) {
+  if (paletteWindowId != null && pendingCtx) {
+    try {
+      await browser.windows.update(paletteWindowId, { focused: true });
+      return;
+    } catch (_) {
+      // The window may have closed before onRemoved reached us.
+      paletteWindowId = null;
+      pendingCtx = null;
+    }
+  }
+  // A previous palette may still be closing after its action was accepted.
+  if (paletteWindowId != null) {
+    try { await browser.windows.remove(paletteWindowId); } catch (_) {}
+    paletteWindowId = null;
+  }
   console.log("[FolderJump] openPalette start, mode =", mode);
 
   const [mailTab] = await browser.mailTabs.query({ active: true, currentWindow: true });
@@ -118,22 +260,9 @@ async function openPalette(mode) {
     // that are still being downloaded (e.g. a slow EWS fetch) — in that
     // window getDisplayedMessages() can still report the previously shown
     // message, and the move would target the wrong mail.
-    let msgs = [];
-    try {
-      msgs = await collectMessages(await browser.mailTabs.getSelectedMessages(mailTab.id));
-    } catch (err) {
-      console.error("[FolderJump] getSelectedMessages threw:", err);
-    }
-    if (!msgs.length) {
-      try {
-        const result = await browser.messageDisplay.getDisplayedMessages(mailTab.id);
-        msgs = result?.messages ?? (Array.isArray(result) ? result : []);
-      } catch (err) {
-        console.error("[FolderJump] getDisplayedMessages threw:", err);
-      }
-    }
+    const msgs = await collectMessages(await browser.mailTabs.getSelectedMessages(mailTab.id));
     console.log("[FolderJump] messages to move:", msgs.length);
-    if (!msgs.length) { console.warn("[FolderJump] no selected or displayed message"); return; }
+    if (!msgs.length) { throw new Error("Select at least one message first."); }
     messageIds = msgs.map(m => m.id);
     accountId = msgs[0].folder?.accountId ?? msgs[0].folder?.account?.id;
   } else {
@@ -142,7 +271,7 @@ async function openPalette(mode) {
   }
 
   console.log("[FolderJump] accountId:", accountId, "messageIds:", messageIds);
-  const folders = await getFlatFolders(accountId);
+  const folders = await getFlatFolders(accountId, mode);
   console.log("[FolderJump] folders found:", folders.length);
 
   // Load pinned + recent IDs for the popup
@@ -163,7 +292,7 @@ async function openPalette(mode) {
   const pw = 580, ph = 440;
   const createProps = {
     type:   "popup",
-    url:    browser.runtime.getURL("popup.html"),
+    url:    browser.runtime.getURL(`popup.html?token=${pendingCtx.token}`),
     width:  pw,
     height: ph
   };
@@ -178,8 +307,22 @@ async function openPalette(mode) {
     // If positioning fails, let the OS place the window — it will still appear.
   }
 
-  const popup = await browser.windows.create(createProps);
-  paletteWindowId = popup?.id ?? null;
+  let popup;
+  try {
+    popup = await browser.windows.create(createProps);
+    // The popup can load, execute or close before windows.create resolves.
+    if (!pendingCtx) {
+      if (popup?.id != null) {
+        try { await browser.windows.remove(popup.id); } catch (_) {}
+      }
+      return;
+    }
+    paletteWindowId = popup?.id ?? null;
+  } catch (err) {
+    pendingCtx = null;
+    paletteWindowId = null;
+    throw err;
+  }
 
   // Bring popup to the front (it can open behind the main window on some builds).
   if (popup?.id) {
@@ -198,11 +341,16 @@ browser.windows.onRemoved.addListener((windowId) => {
 
 // ── Recent folders (MRU) ───────────────────────────────────────────────
 const MAX_RECENT = 15;
-async function recordRecent(folderId) {
-  if (!folderId) { return; }
-  const { recentFolderIds = [] } = await browser.storage.local.get("recentFolderIds");
-  const next = [folderId, ...recentFolderIds.filter(id => id !== folderId)].slice(0, MAX_RECENT);
-  await browser.storage.local.set({ recentFolderIds: next });
+let recentWrite = Promise.resolve();
+function recordRecent(folderId) {
+  if (!folderId) { return Promise.resolve(); }
+  const write = recentWrite.then(async () => {
+    const { recentFolderIds = [] } = await browser.storage.local.get("recentFolderIds");
+    const next = [folderId, ...recentFolderIds.filter(id => id !== folderId)].slice(0, MAX_RECENT);
+    await browser.storage.local.set({ recentFolderIds: next });
+  });
+  recentWrite = write.catch(() => {});
+  return write;
 }
 
 // ── Message lists ──────────────────────────────────────────────────────
@@ -220,22 +368,41 @@ async function collectMessages(list) {
 }
 
 // ── Folder enumeration ─────────────────────────────────────────────────
-async function getFlatFolders(accountId) {
+async function getFlatFolders(accountId, mode = "jump") {
   const accounts = await browser.accounts.list(true); // true = include subFolders
   const account  = accounts.find(a => a.id === accountId);
   if (!account) { return []; }
 
+  // One local query avoids a capability request for every folder. Keep
+  // unavailable targets in the palette so searching for one explains why
+  // it cannot be used. TB 115 has neither query nor capability APIs.
+  const unavailableIds = new Set();
+  if (mode === "move" && browser.folders?.query) {
+    const unavailable = await browser.folders.query({ accountId, canAddMessages: false });
+    for (const folder of unavailable) { unavailableIds.add(folder.id); }
+  }
   const result = [];
 
   function walk(folders, prefix) {
     for (const f of folders) {
       const displayPath = prefix ? `${prefix}/${f.name}` : f.name;
+      let moveUnavailableReason = null;
+      if (mode === "move") {
+        if (f.isRoot || f.path === "/") {
+          moveUnavailableReason = "Account roots cannot receive messages. Choose a mail folder below this account.";
+        } else if (f.isVirtual || f.isTag || f.isUnified) {
+          moveUnavailableReason = "This is a virtual folder. Choose a real mail folder as the destination.";
+        } else if (unavailableIds.has(f.id)) {
+          moveUnavailableReason = "This folder cannot receive messages. It may be read-only or only contain subfolders.";
+        }
+      }
       result.push({
         id:          f.id ?? `${f.accountId}:${f.path}`, // stable key for UI
         accountId:   f.accountId,
         path:        f.path,         // MV2 MailFolder key
         name:        f.name,
-        displayPath
+        displayPath,
+        moveUnavailableReason
       });
       if (f.subFolders?.length) {
         walk(f.subFolders, displayPath);
@@ -249,41 +416,46 @@ async function getFlatFolders(accountId) {
 }
 
 // ── Message handling (from popup.js) ───────────────────────────────────
-browser.runtime.onMessage.addListener(async (msg) => {
+browser.runtime.onMessage.addListener(async (msg, sender) => {
   // ── Popup requests context ─────────────────────────────────────────
   if (msg.action === "getContext") {
-    return pendingCtx ?? null;
+    if (!pendingCtx || msg.token !== pendingCtx.token) { return null; }
+    // Bind early so closing a quickly loaded popup always clears its context.
+    if (sender?.tab?.windowId != null) { paletteWindowId = sender.tab.windowId; }
+    return pendingCtx;
   }
 
   // ── User selected a folder in the popup ───────────────────────────
   if (msg.action === "executeAction") {
     if (!pendingCtx || msg.token !== pendingCtx.token) {
       console.warn("[FolderJump] stale palette context, ignoring executeAction");
-      return;
+      return { ok: false, error: "This palette has expired. Close it and open Folder Jump again." };
     }
     const { mode, messageIds, tabId, folders = [] } = pendingCtx;
-    pendingCtx = null;
-    if (!mode) { return; }
 
     const folder = folders.find(f => f.id === msg.folderId);
-    if (!folder) { console.warn("[FolderJump] folder not found for id", msg.folderId); return; }
+    if (!folder) { return { ok: false, error: "Folder not found. Reopen Folder Jump to refresh the list." }; }
+    if (mode === "move" && folder.moveUnavailableReason) {
+      return { ok: false, error: folder.moveUnavailableReason };
+    }
     const mailFolder = { accountId: folder.accountId, path: folder.path };
 
-    // Don't await the move/jump: the popup waits for this reply before it
-    // closes, and messages.move() only resolves once the server round-trip
-    // (IMAP/EWS) has completed — which can take seconds, e.g. while the
-    // message body is still being downloaded. Kick it off, reply at once,
-    // and log failures.
-    if (mode === "move" && messageIds?.length) {
-      // TB 121+ wants the MailFolderId string here.
-      browser.messages.move(messageIds, folder.id)
-        .catch(err => console.error("[FolderJump] move failed:", err));
-    } else if (mode === "jump") {
-      // MV2 mailTabs.update still wants the {accountId, path} MailFolder object.
-      browser.mailTabs.update(tabId, { displayedFolder: mailFolder })
-        .catch(err => console.error("[FolderJump] jump failed:", err));
+    try {
+      if (mode === "move" && messageIds?.length) {
+        startMove(messageIds, folder);
+      } else if (mode === "jump") {
+        startAction({
+          label: `Opening ${folder.displayPath}…`,
+          folderId: folder.id,
+          run: () => browser.mailTabs.update(tabId, { displayedFolder: mailFolder })
+        });
+      } else {
+        return { ok: false, error: "No messages selected. Reopen Folder Jump." };
+      }
+    } catch (err) {
+      return { ok: false, error: err.message ?? String(err) };
     }
-    await recordRecent(folder.id);
+    pendingCtx = null;
     return { ok: true };
   }
 
@@ -320,12 +492,18 @@ async function pinnedFolderById(id) {
 }
 
 browser.folderjump.onFolderDropped.addListener(async (folderId) => {
-  const [mailTab] = await browser.mailTabs.query({ active: true, currentWindow: true });
-  if (!mailTab) { return; }
-  const msgs = await collectMessages(await browser.mailTabs.getSelectedMessages(mailTab.id));
-  const ids = msgs.map(m => m.id);
-  if (!ids.length) { return; }
-  await browser.messages.move(ids, folderId);
+  try {
+    const [mailTab] = await browser.mailTabs.query({ active: true, currentWindow: true });
+    if (!mailTab) { return; }
+    const msgs = await collectMessages(await browser.mailTabs.getSelectedMessages(mailTab.id));
+    const ids = msgs.map(m => m.id);
+    if (!ids.length) { return; }
+    const folder = await pinnedFolderById(folderId);
+    if (!folder) { throw new Error("Pinned folder not found. Pin it again from the palette."); }
+    startMove(ids, folder);
+  } catch (err) {
+    showActionError(`Could not start move: ${err.message ?? String(err)}`);
+  }
 });
 
 browser.folderjump.onFolderUnpinRequested.addListener(async (folderId) => {

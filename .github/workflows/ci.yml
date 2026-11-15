@@ -13,6 +13,8 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '20' }
 
+      - run: node --test tests/*.test.cjs
+
       - run: npm install --global web-ext
 
       # Skipping web-ext lint: it uses Firefox API rules and flags all

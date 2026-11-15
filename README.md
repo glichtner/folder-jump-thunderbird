@@ -156,12 +156,43 @@ tab, when focus is in an editable element, or when there is nothing to undo
 (`folderjump.setUndoAvailable(false)`) — in which case Thunderbird's own
 undo runs as usual.
 
-Moves triggered from the palette are fire-and-forget: the background replies
-to the popup immediately and lets `messages.move()` finish on its own. That
-call only resolves after the server round-trip, and for IMAP/EWS/OWL that can
-take a few seconds (especially when the message body is still being
-downloaded on the same connection) — the add-on can't speed the round-trip
-up, but it no longer keeps the palette open while waiting.
+The palette closes once the background accepts an action. A status row below
+the pinned bar tracks the move until Thunderbird reports completion, then
+disappears without a success message. Errors stay visible; a slow operation
+remains marked as running. Selecting the same
+messages again while they are moving is rejected. Moves are never retried
+automatically, since a failed batch may already have moved some messages.
+Recent folders are updated only after a successful action, without delaying
+the popup on storage access.
+
+In move mode, unavailable destinations stay visible with an explanation but
+cannot be selected. On Thunderbird 121+, the palette checks `canAddMessages`
+alongside root/virtual-folder flags. The destination is checked again just
+before a move, including drops onto pinned folders, so locally known
+restrictions or deleted targets produce an error instead of an untracked move. Jump mode
+still allows navigation to these folders. These checks use Thunderbird's
+current local folder information; a server can still reject a move (for
+example because its quota or permissions changed). Thunderbird 115 lacks
+the capability API and relies on the move result for those restrictions.
+See the [folder capability API](https://webextension-api.thunderbird.net/en/beta-mv2/folders.html#getfoldercapabilities-folder).
+
+For native EWS, this is a preliminary check, not verification of Exchange
+server permissions. The current native Exchange folder implementation
+inherits the basic folder-type capability checks; the server can still
+reject an otherwise eligible target. A successful capability check also
+does not prove that Thunderbird has a valid Exchange ID for that folder.
+See Thunderbird's [Exchange folder implementation](https://github.com/mozilla/releases-comm-central/blob/master/mailnews/protocols/exchange/src/ExchangeFolder.cpp)
+and [base folder capability checks](https://github.com/mozilla/releases-comm-central/blob/master/mailnews/base/src/nsMsgDBFolder.cpp).
+When diagnosing EWS failures, compare the same message and destination with
+Thunderbird's own Move To command and retain the displayed error. Also note
+whether the account uses native EWS or an extension such as Owl/ExQuilla;
+their backend behavior can differ.
+
+On Thunderbird 137+, moves use `isUserAction: true`, which supplies the mail
+window to the backend for user interaction and enables native undo. Older
+versions use the two-argument API. MV2 account/path destinations also work on
+Thunderbird 115, where the palette's generated folder keys are not API IDs.
+See the [move API](https://webextension-api.thunderbird.net/en/mv2/messages.html#move-messageids-destination-options).
 
 ### Debugging
 
@@ -169,6 +200,10 @@ up, but it no longer keeps the palette open while waiting.
   or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>J</kbd>) — all log output is
   prefixed `[FolderJump]`.
 - Reload quickly via `about:debugging` → this extension → **Reload**.
+- Action logs include elapsed milliseconds and Thunderbird's error text.
+- Run regression tests with `node --test tests/*.test.cjs` (Node 20+).
+  The tests simulate delayed and failed Thunderbird API calls; verify a move
+  and undo with your actual mail backend after installing an update.
 
 ---
 
@@ -180,7 +215,7 @@ up, but it no longer keeps the palette open while waiting.
 | **Bar position** | Fixed to the top of the window (`position: fixed; top: 0`). It sits above the tab strip when the DOM anchor isn't found. |
 | **Drag-and-drop** | The drop handler reads selected messages from the list — select messages *before* dragging to the bar. |
 | **Thunderbird version** | Requires 115+. Some internal APIs shift on 128+; test on your build. |
-| **Move latency** | The palette closes immediately, but the message only leaves the list once the backend (IMAP/EWS/OWL) has completed the move — that can take a few seconds, e.g. while a large message is still downloading. Compare with a drag-and-drop move in Thunderbird itself: if that is equally slow, it's the server/backend, not the add-on. |
+| **Move latency** | The palette closes when the action is accepted. The main window shows progress and errors; completion still depends on Thunderbird and the backend (IMAP/EWS/OWL). Compare the timing with Thunderbird's own Move To command when investigating server delays. |
 | **Undo scope** | <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo only listens in the main mail window (mail tabs, non-editable focus). Moves done from a standalone message window can still be undone from the main window afterwards. History is per session (last 25 moves). |
 | **Exchange via OWL** | OWL accounts work for move/jump. Thunderbird's built-in undo doesn't reverse OWL moves (OWL doesn't register undoable transactions), but the add-on's own <kbd>Ctrl</kbd>+<kbd>Z</kbd> does. |
 | **Signature for ATN listing** | Experiments face stricter ATN review; for internal use, self-sign or disable `xpinstall.signatures.required`. |

@@ -5,6 +5,16 @@
 
     "functions": [
       {
+        "name": "setActionStatus",
+        "type": "function",
+        "description": "Show pending actions or failures beneath the pinned-folder bar. Empty text clears the status.",
+        "async": true,
+        "parameters": [
+          { "name": "state", "type": "string", "enum": ["", "running", "error"] },
+          { "name": "text", "type": "string" }
+        ]
+      },
+      {
         "name": "updateBar",
         "type": "function",
         "description": "Create or refresh the pinned-folder bar in all open 3-pane windows.",

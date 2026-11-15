@@ -17,12 +17,14 @@ let filtered     = [];
 let selIdx       = 0;
 let mode         = "jump";
 let ctxToken     = null; // session token, echoed back on executeAction
+let submitting   = false;
 
 // ── Boot ───────────────────────────────────────────────────────────────
 (async () => {
   let ctx = null;
   try {
-    ctx = await browser.runtime.sendMessage({ action: "getContext" });
+    const token = Number(new URLSearchParams(window.location.search).get("token"));
+    ctx = await browser.runtime.sendMessage({ action: "getContext", token });
   } catch (_) {}
 
   if (!ctx) {
@@ -239,13 +241,24 @@ function renderList() {
     const cls = [];
     if (i === selIdx) { cls.push("selected"); }
     if (recentSet && recentSet.has(f.id)) { cls.push("recent"); }
+    if (f.moveUnavailableReason) { cls.push("unavailable"); }
     if (cls.length) { li.className = cls.join(" "); }
     li.setAttribute("role", "option");
+    if (f.moveUnavailableReason) {
+      li.setAttribute("aria-disabled", "true");
+      li.title = f.moveUnavailableReason;
+    }
 
     // Path span with highlighted chars
     const span = document.createElement("span");
     span.className = "folder-path";
     appendHighlighted(span, f.displayPath, needle);
+    if (f.moveUnavailableReason) {
+      const reason = document.createElement("small");
+      reason.className = "folder-reason";
+      reason.textContent = f.moveUnavailableReason;
+      span.appendChild(reason);
+    }
     li.appendChild(span);
 
     // Pin star button
@@ -308,14 +321,27 @@ function appendHighlighted(container, path, needle) {
 
 // ── Actions ────────────────────────────────────────────────────────────
 async function selectFolder(folder) {
+  if (submitting) { return; }
+  submitting = true;
+  const status = document.getElementById("action-status");
+  status.textContent = "";
+  status.hidden = true;
   try {
-    await browser.runtime.sendMessage({
+    if (folder.moveUnavailableReason) { throw new Error(folder.moveUnavailableReason); }
+    const result = await browser.runtime.sendMessage({
       action: "executeAction",
       folderId: folder.id,
       token: ctxToken
     });
-  } catch (_) {}
-  window.close();
+    if (!result?.ok) {
+      throw new Error(result?.error ?? "No confirmation received. Check the move status in Thunderbird before reopening Folder Jump.");
+    }
+    window.close();
+  } catch (err) {
+    status.textContent = err.message ?? String(err);
+    status.hidden = false;
+    submitting = false;
+  }
 }
 
 async function togglePin(folder) {

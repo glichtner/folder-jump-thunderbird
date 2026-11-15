@@ -100,6 +100,19 @@ body {
   text-overflow: ellipsis;
 }
 
+#folder-list li.unavailable {
+  color: #999;
+  cursor: not-allowed;
+}
+
+.folder-reason {
+  display: block;
+  font-size: 11px;
+  font-weight: normal;
+  color: #c8a27a;
+  white-space: normal;
+}
+
 /* Highlight matching characters */
 .folder-path mark {
   background: transparent;
@@ -145,6 +158,14 @@ body {
 }
 
 /* ── Hint bar ────────────────────────────────────────────────────────── */
+#action-status {
+  padding: 8px 14px;
+  background: #442525;
+  color: #ffb4b4;
+  overflow-wrap: anywhere;
+  flex-shrink: 0;
+}
+
 #hint-bar {
   display: flex;
   gap: 16px;

@@ -15,6 +15,8 @@
 
 const BAR_ID = "folderjump-bar";
 const MENU_ID = "folderjump-ctx";
+const STATUS_ID = "folderjump-status";
+let _actionStatus = { state: "", text: "" };
 
 this.folderjump = class extends ExtensionAPI {
   // ── Lifecycle ───────────────────────────────────────────────────────
@@ -94,6 +96,11 @@ this.folderjump = class extends ExtensionAPI {
         // ── setUndoAvailable(available) ──────────────────────────────
         async setUndoAvailable(available) {
           undoState.available = !!available;
+        },
+
+        async setActionStatus(state, text) {
+          _actionStatus = { state, text };
+          _updateActionStatusInWindows();
         },
 
         // ── Events ───────────────────────────────────────────────────
@@ -228,6 +235,59 @@ function _isEditable(node) {
 function _cleanup(doc) {
   doc.getElementById(BAR_ID)?.remove();
   doc.getElementById(MENU_ID)?.remove();
+  doc.getElementById(STATUS_ID)?.remove();
+}
+
+function _updateActionStatusInWindows() {
+  for (const win of Services.wm.getEnumerator("mail:3pane")) {
+    _renderActionStatus(win.document);
+    for (const b of win.document.querySelectorAll('browser[id^="mail3PaneTabBrowser"]')) {
+      if (b.contentDocument) { _renderActionStatus(b.contentDocument); }
+    }
+  }
+}
+
+// A separate row stays visible even when the pinned buttons fill the bar.
+// Use textContent: folder names and server errors are untrusted text.
+function _renderActionStatus(doc) {
+  doc.getElementById(STATUS_ID)?.remove();
+  const bar = doc.getElementById(BAR_ID);
+  if (!bar || !_actionStatus.text) { return; }
+  const isError = _actionStatus.state === "error";
+  const row = _el(doc, "div", {
+    id: STATUS_ID,
+    role: isError ? "alert" : "status"
+  });
+  Object.assign(row.style, {
+    display: "flex", alignItems: "center", gap: "8px", padding: "6px 10px",
+    background: isError ? "#442525" : "#1e2d3a",
+    color: isError ? "#ffb4b4" : "#cce5ff",
+    font: "12px 'Segoe UI', sans-serif", flexShrink: "0"
+  });
+  if (bar.style.position === "fixed") {
+    Object.assign(row.style, {
+      position: "fixed", top: `${bar.offsetHeight}px`, left: "0", right: "0", zIndex: "9999"
+    });
+  }
+  const text = _el(doc, "span");
+  text.textContent = _actionStatus.text;
+  Object.assign(text.style, {
+    flex: "1", overflowWrap: "anywhere", maxHeight: "5em", overflowY: "auto"
+  });
+  row.appendChild(text);
+  if (_actionStatus.state !== "running") {
+    const close = _el(doc, "button", { type: "button", "aria-label": "Dismiss status" });
+    close.textContent = "×";
+    Object.assign(close.style, {
+      background: "transparent", color: "inherit", border: "none", cursor: "pointer", fontSize: "18px"
+    });
+    close.addEventListener("click", () => {
+      _actionStatus = { state: "", text: "" };
+      _updateActionStatusInWindows();
+    });
+    row.appendChild(close);
+  }
+  bar.after(row);
 }
 
 // Entry point — refresh the bar in every relevant document inside `outerDoc`
@@ -502,6 +562,7 @@ function _renderBarInDoc(doc, container, beforeNode, folders, clickListeners, dr
   } else {
     doc.documentElement.appendChild(bar);
   }
+  _renderActionStatus(doc);
 }
 
 function _el(doc, tag, attrs) {

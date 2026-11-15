@@ -6,6 +6,7 @@ export default {
     '.claude/**',
     'node_modules/**',
     'artifacts/**',
+    'tests/**',
     '*.xpi',
     '*.zip',
     'web-ext-config.mjs',
